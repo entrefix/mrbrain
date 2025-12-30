@@ -15,6 +15,7 @@ func Setup(
 	aiProviderService *services.AIProviderService,
 	memoryService *services.MemoryService,
 	ragService *services.RAGService,
+	userDataService *services.UserDataService,
 	allowedOrigins []string,
 ) *gin.Engine {
 	r := gin.Default()
@@ -39,6 +40,7 @@ func Setup(
 	aiProviderHandler := handlers.NewAIProviderHandler(aiProviderService)
 	memoryHandler := handlers.NewMemoryHandler(memoryService)
 	ragHandler := handlers.NewRAGHandler(ragService)
+	userDataHandler := handlers.NewUserDataHandler(userDataService)
 
 	// API routes
 	api := r.Group("/api")
@@ -103,6 +105,11 @@ func Setup(
 			protected.POST("/rag/ask", ragHandler.Ask)
 			protected.POST("/rag/index", ragHandler.IndexAll)
 			protected.GET("/rag/stats", ragHandler.GetStats)
+
+			// User Data Management
+			protected.GET("/user/data/stats", userDataHandler.GetDataStats)
+			protected.POST("/user/data/clear-memories", userDataHandler.ClearMemories)
+			protected.POST("/user/data/clear-all", userDataHandler.ClearAllData)
 		}
 	}
 

@@ -161,6 +161,22 @@ func (r *TodoRepository) Delete(id string) error {
 	return err
 }
 
+// DeleteAllByUserID deletes all todos for a user
+func (r *TodoRepository) DeleteAllByUserID(userID string) (int64, error) {
+	result, err := r.db.Exec("DELETE FROM todos WHERE user_id = ?", userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// CountByUserID returns the count of todos for a user
+func (r *TodoRepository) CountByUserID(userID string) (int, error) {
+	var count int
+	err := r.db.QueryRow("SELECT COUNT(*) FROM todos WHERE user_id = ?", userID).Scan(&count)
+	return count, err
+}
+
 func (r *TodoRepository) GetMaxPosition(userID string) (int, error) {
 	var maxPos sql.NullInt64
 	err := r.db.QueryRow(`

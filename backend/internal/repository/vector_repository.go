@@ -318,6 +318,67 @@ func (r *VectorRepository) DeleteByContentID(ctx context.Context, contentType mo
 	return nil
 }
 
+// DeleteByUser removes all documents for a user and content type
+func (r *VectorRepository) DeleteByUser(ctx context.Context, userID string, contentType models.ContentType) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Use chromem's WHERE metadata filter to delete
+	whereMetadata := map[string]string{
+		"user_id":      userID,
+		"content_type": string(contentType),
+	}
+
+	// Delete from chromem collection
+	if err := r.collection.Delete(ctx, whereMetadata, nil); err != nil {
+		log.Printf("[VectorRepo] Error deleting user documents: %v", err)
+		return err
+	}
+
+	// Clean up documentMap cache
+	var idsToDelete []string
+	for id, doc := range r.documentMap {
+		if doc.UserID == userID && doc.ContentType == contentType {
+			idsToDelete = append(idsToDelete, id)
+		}
+	}
+	for _, id := range idsToDelete {
+		delete(r.documentMap, id)
+	}
+
+	log.Printf("[VectorRepo] Deleted all documents for user=%s type=%s (cache entries: %d)", userID, contentType, len(idsToDelete))
+	return nil
+}
+
+// DeleteAllByUser removes ALL documents for a user (all content types)
+func (r *VectorRepository) DeleteAllByUser(ctx context.Context, userID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	whereMetadata := map[string]string{
+		"user_id": userID,
+	}
+
+	if err := r.collection.Delete(ctx, whereMetadata, nil); err != nil {
+		log.Printf("[VectorRepo] Error deleting all user documents: %v", err)
+		return err
+	}
+
+	// Clean up cache
+	var idsToDelete []string
+	for id, doc := range r.documentMap {
+		if doc.UserID == userID {
+			idsToDelete = append(idsToDelete, id)
+		}
+	}
+	for _, id := range idsToDelete {
+		delete(r.documentMap, id)
+	}
+
+	log.Printf("[VectorRepo] Deleted all documents for user=%s (cache entries: %d)", userID, len(idsToDelete))
+	return nil
+}
+
 // GetByContentID finds a document by its original content ID
 func (r *VectorRepository) GetByContentID(contentType models.ContentType, contentID string) *models.Document {
 	r.mu.RLock()

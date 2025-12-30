@@ -121,3 +121,19 @@ func (r *GroupRepository) Delete(id string) error {
 	_, err := r.db.Exec("DELETE FROM groups WHERE id = ? AND is_default = 0", id)
 	return err
 }
+
+// DeleteAllCustomByUserID deletes all custom (non-default) groups for a user
+func (r *GroupRepository) DeleteAllCustomByUserID(userID string) (int64, error) {
+	result, err := r.db.Exec("DELETE FROM groups WHERE user_id = ? AND is_default = 0", userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// CountCustomByUserID returns the count of custom (non-default) groups for a user
+func (r *GroupRepository) CountCustomByUserID(userID string) (int, error) {
+	var count int
+	err := r.db.QueryRow("SELECT COUNT(*) FROM groups WHERE user_id = ? AND is_default = 0", userID).Scan(&count)
+	return count, err
+}

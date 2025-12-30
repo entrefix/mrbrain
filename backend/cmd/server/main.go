@@ -65,6 +65,7 @@ func main() {
 
 	// Initialize RAG components (before todo/memory services so they can use it)
 	var ragService *services.RAGService
+	var vectorRepo *repository.VectorRepository
 
 	if cfg.RAGEnabled && cfg.OpenAIBaseURL != "" && cfg.OpenAIAPIKey != "" {
 		log.Println("Initializing RAG service...")
@@ -84,7 +85,7 @@ func main() {
 		}
 
 		// Create vector repository
-		vectorRepo, err := repository.NewVectorRepository(
+		vRepo, err := repository.NewVectorRepository(
 			repository.VectorConfig{
 				PersistPath: cfg.VectorDBPath,
 				Dimension:   embeddingService.GetDimension(),
@@ -96,6 +97,7 @@ func main() {
 		if err != nil {
 			log.Printf("Warning: Failed to create vector repository: %v", err)
 		} else {
+			vectorRepo = vRepo
 			// Create RAG service
 			ragService = services.NewRAGService(
 				vectorRepo,
@@ -116,8 +118,11 @@ func main() {
 	todoService := services.NewTodoService(todoRepo, aiService, aiProviderService, ragService)
 	memoryService := services.NewMemoryService(memoryRepo, todoRepo, aiService, aiProviderService, scraperService, ragService)
 
+	// Initialize user data service (for data management)
+	userDataService := services.NewUserDataService(memoryRepo, todoRepo, groupRepo, vectorRepo, ragService)
+
 	// Setup router
-	r := router.Setup(authService, todoService, groupService, aiProviderService, memoryService, ragService, cfg.AllowedOrigins)
+	r := router.Setup(authService, todoService, groupService, aiProviderService, memoryService, ragService, userDataService, cfg.AllowedOrigins)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)

@@ -198,6 +198,22 @@ func (r *MemoryRepository) Delete(id string) error {
 	return err
 }
 
+// DeleteAllByUserID deletes all memories for a user
+func (r *MemoryRepository) DeleteAllByUserID(userID string) (int64, error) {
+	result, err := r.db.Exec("DELETE FROM memories WHERE user_id = ?", userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// CountByUserID returns the count of memories for a user
+func (r *MemoryRepository) CountByUserID(userID string) (int, error) {
+	var count int
+	err := r.db.QueryRow("SELECT COUNT(*) FROM memories WHERE user_id = ?", userID).Scan(&count)
+	return count, err
+}
+
 // Categories
 
 func (r *MemoryRepository) GetCategories(userID string) ([]models.MemoryCategory, error) {

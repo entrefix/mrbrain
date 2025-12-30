@@ -4,6 +4,7 @@ export { groupApi } from './groups';
 export { memoryApi } from './memories';
 export { ragApi } from './rag';
 export { default as aiProviderApi } from './aiProviders';
+export { userDataApi } from './userData';
 export type { LoginRequest, RegisterRequest } from './auth';
 export type { TodoReorderRequest } from './todos';
 export type {
@@ -14,4 +15,5 @@ export type {
   TestConnectionRequest,
   TestConnectionResponse
 } from './aiProviders';
+export type { DataStats, ClearMemoriesResult, ClearAllResult } from './userData';
 export { DEFAULT_BASE_URLS, PROVIDER_LABELS } from './aiProviders';

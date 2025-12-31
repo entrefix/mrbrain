@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
-import { Upload, Gear, Sun, Moon, Plus, Cpu, Trash, Database } from '@phosphor-icons/react';
+import { Gear, Plus, Cpu, Trash, Database } from '@phosphor-icons/react';
 import { useAuth } from '../contexts/AuthContext';
-import { useTheme } from '../contexts/ThemeContext';
 import { memoryApi, todoApi, ragApi, aiProviderApi, userDataApi } from '../api';
 import type { Memory, Todo, RAGAskResponse, RAGSearchResult } from '../types';
 import type { AIProvider, AIProviderModel, AIProviderCreate, DataStats } from '../api';
@@ -391,19 +390,25 @@ export default function Unified() {
 
   // Get logo - using text for now
   const Logo = () => (
-    <div className="flex items-center gap-2">
+    <button
+      onClick={() => {
+        setActiveTab('mems');
+        setShowSettings(false);
+        // Clear citations when navigating to mems
+        setMemoryCitations([]);
+        setTodoCitations([]);
+      }}
+      className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
+    >
       <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
         <span className="text-white text-sm font-bold">M</span>
       </div>
       <span className="text-xl font-heading text-gray-800 dark:text-white hidden sm:inline">Mr. Brain</span>
-    </div>
+    </button>
   );
 
   // Settings Content Component
   const SettingsContent = () => {
-    const { theme, toggleTheme } = useTheme();
-    const [emailNotifications, setEmailNotifications] = useState(true);
-    const [pushNotifications, setPushNotifications] = useState(true);
     const [providers, setProviders] = useState<AIProvider[]>([]);
     const [providerModels, setProviderModels] = useState<Record<string, AIProviderModel[]>>({});
     const [loadingProviders, setLoadingProviders] = useState(true);
@@ -563,10 +568,6 @@ export default function Unified() {
       }
     };
 
-    const handleSaveSettings = () => {
-      toast.success('Settings saved successfully');
-    };
-
     return (
       <>
         <div className="max-w-2xl mx-auto">
@@ -718,66 +719,6 @@ export default function Unified() {
               </div>
             </div>
 
-            {/* Theme & Notifications */}
-            <div className="bg-surface-light-muted dark:bg-surface-dark-muted rounded-2xl">
-              <div className="p-6 space-y-6">
-                <div>
-                  <h2 className="text-lg font-heading text-gray-900 dark:text-white mb-4">
-                    Theme Preferences
-                  </h2>
-                  <button
-                    onClick={toggleTheme}
-                    className="flex items-center px-4 py-3 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-surface-light dark:hover:bg-surface-dark-elevated transition-all duration-200"
-                  >
-                    {theme === 'dark' ? (
-                      <Sun size={20} weight="regular" className="mr-3" />
-                    ) : (
-                      <Moon size={20} weight="regular" className="mr-3" />
-                    )}
-                    {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-                  </button>
-                </div>
-
-                <div>
-                  <h2 className="text-lg font-heading text-gray-900 dark:text-white mb-4">
-                    Notifications
-                  </h2>
-                  <div className="space-y-4">
-                    <label className="flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={emailNotifications}
-                        onChange={(e) => setEmailNotifications(e.target.checked)}
-                        className="w-5 h-5 rounded-lg border-gray-300 text-primary-600 focus:ring-primary-500 focus:ring-offset-0"
-                      />
-                      <span className="ml-3 text-gray-700 dark:text-gray-300">
-                        Email Notifications
-                      </span>
-                    </label>
-                    <label className="flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={pushNotifications}
-                        onChange={(e) => setPushNotifications(e.target.checked)}
-                        className="w-5 h-5 rounded-lg border-gray-300 text-primary-600 focus:ring-primary-500 focus:ring-offset-0"
-                      />
-                      <span className="ml-3 text-gray-700 dark:text-gray-300">
-                        Push Notifications
-                      </span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div className="px-6 py-4 bg-surface-light dark:bg-surface-dark-elevated rounded-b-2xl">
-                <button
-                  onClick={handleSaveSettings}
-                  className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-xl text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
-                >
-                  Save Settings
-                </button>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -848,14 +789,6 @@ export default function Unified() {
           </div>
           
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => setIsImportModalOpen(true)}
-              className="p-2 hover:bg-gray-100/80 dark:hover:bg-gray-800/80 rounded-lg transition-colors"
-              title="Import"
-            >
-              <Upload size={20} weight="regular" className="text-gray-600 dark:text-gray-400" />
-            </button>
-            
             <button
               onClick={() => {
                 setShowSettings(!showSettings);

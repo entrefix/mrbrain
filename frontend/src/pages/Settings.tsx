@@ -341,54 +341,6 @@ export default function Settings() {
 
         {/* Theme & Notifications */}
         <div className="bg-surface-light-muted dark:bg-surface-dark-muted rounded-2xl">
-          <div className="p-6 space-y-6">
-            <div>
-              <h2 className="text-lg font-heading text-gray-900 dark:text-white mb-4">
-                Theme Preferences
-              </h2>
-              <button
-                onClick={toggleTheme}
-                className="flex items-center px-4 py-3 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-surface-light dark:hover:bg-surface-dark-elevated transition-all duration-200"
-              >
-                {theme === 'dark' ? (
-                  <Sun size={20} weight="regular" className="mr-3" />
-                ) : (
-                  <Moon size={20} weight="regular" className="mr-3" />
-                )}
-                {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-              </button>
-            </div>
-
-            <div>
-              <h2 className="text-lg font-heading text-gray-900 dark:text-white mb-4">
-                Notifications
-              </h2>
-              <div className="space-y-4">
-                <label className="flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={emailNotifications}
-                    onChange={(e) => setEmailNotifications(e.target.checked)}
-                    className="w-5 h-5 rounded-lg border-gray-300 text-primary-600 focus:ring-primary-500 focus:ring-offset-0"
-                  />
-                  <span className="ml-3 text-gray-700 dark:text-gray-300">
-                    Email Notifications
-                  </span>
-                </label>
-                <label className="flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={pushNotifications}
-                    onChange={(e) => setPushNotifications(e.target.checked)}
-                    className="w-5 h-5 rounded-lg border-gray-300 text-primary-600 focus:ring-primary-500 focus:ring-offset-0"
-                  />
-                  <span className="ml-3 text-gray-700 dark:text-gray-300">
-                    Push Notifications
-                  </span>
-                </label>
-              </div>
-            </div>
-          </div>
 
           <div className="px-6 py-4 bg-surface-light dark:bg-surface-dark-elevated rounded-b-2xl">
             <button

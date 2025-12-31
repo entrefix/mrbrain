@@ -24,15 +24,6 @@ export default function ProfileDropdown() {
     };
   }, [isOpen]);
 
-  const getGravatarUrl = (email: string) => {
-    // Simple MD5 hash simulation - in production, use a proper MD5 library
-    // For now, using a simple hash based on email
-    const hash = email.split('').reduce((acc, char) => {
-      return ((acc << 5) - acc) + char.charCodeAt(0) | 0;
-    }, 0);
-    const hashStr = Math.abs(hash).toString(16);
-    return `https://www.gravatar.com/avatar/${hashStr}?d=identicon&s=40`;
-  };
 
   const handleSignOut = async () => {
     await signOut();
@@ -45,13 +36,9 @@ export default function ProfileDropdown() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-10 h-10 rounded-full overflow-hidden border-2 border-gray-200 dark:border-gray-700 hover:border-primary-500 dark:hover:border-primary-400 transition-colors"
+        className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 hover:border-primary-500 dark:hover:border-primary-400 transition-colors flex items-center justify-center"
       >
-        <img
-          src={getGravatarUrl(user.email)}
-          alt={user.full_name || user.email}
-          className="w-full h-full object-cover"
-        />
+        <User size={20} weight="regular" className="text-gray-600 dark:text-gray-300" />
       </button>
 
       <AnimatePresence>
@@ -72,12 +59,8 @@ export default function ProfileDropdown() {
             >
               <div className="p-4 border-b border-gray-200 dark:border-gray-700">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-gray-200 dark:border-gray-700">
-                    <img
-                      src={getGravatarUrl(user.email)}
-                      alt={user.full_name || user.email}
-                      className="w-full h-full object-cover"
-                    />
+                  <div className="w-12 h-12 rounded-full bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 flex items-center justify-center">
+                    <User size={24} weight="regular" className="text-gray-600 dark:text-gray-300" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 dark:text-white truncate">

@@ -1,5 +1,8 @@
 # memlane - Memories App
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 A personal productivity application with AI-powered task management and a smart memories/notes system.
 
 ## Features
@@ -252,6 +255,20 @@ npm run dev
 - JWT Authentication
 - bcrypt Password Hashing
 
+## Contributing
+
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+
+## Security
+
+If you discover a security vulnerability, please follow our [Security Policy](SECURITY.md) and report it privately.
+
 ## License
 
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Built with [React](https://react.dev/), [Go](https://go.dev/), and [SQLite](https://www.sqlite.org/)
+- Vector embeddings powered by [NVIDIA NIM](https://build.nvidia.com)
+- UI components styled with [Tailwind CSS](https://tailwindcss.com/)

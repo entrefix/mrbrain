@@ -8,6 +8,7 @@ import Dashboard from '../pages/Dashboard';
 import Memories from '../pages/Memories';
 import Chat from '../pages/Chat';
 import Settings from '../pages/Settings';
+import Unified from '../pages/Unified';
 
 export default function AppRoutes() {
   const { user } = useAuth();
@@ -18,6 +19,7 @@ export default function AppRoutes() {
       <Route path="/register" element={!user ? <Register /> : <Navigate to="/memories" />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
+          <Route path="/unified" element={<Unified />} />
           <Route path="/todos" element={<Dashboard />} />
           <Route path="/memories" element={<Memories />} />
           <Route path="/chat" element={<Chat />} />

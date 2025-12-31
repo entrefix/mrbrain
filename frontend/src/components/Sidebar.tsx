@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { CheckSquare, BookmarkSimple, ChatCircle, Gear, SignOut, Sun, Moon, X } from '@phosphor-icons/react';
+import { CheckSquare, BookmarkSimple, ChatCircle, Gear, SignOut, Sun, Moon, X, SquaresFour } from '@phosphor-icons/react';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -24,6 +24,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   };
 
   const navItems = [
+    { path: '/unified', icon: SquaresFour, label: 'Unified' },
     { path: '/memories', icon: BookmarkSimple, label: 'Memories' },
     { path: '/todos', icon: CheckSquare, label: 'Todos' },
     { path: '/chat', icon: ChatCircle, label: 'Ask AI' },

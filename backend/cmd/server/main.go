@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"log"
 
 	"github.com/todomyday/backend/internal/config"
@@ -67,11 +66,17 @@ func main() {
 	var ragService *services.RAGService
 	var vectorRepo *repository.VectorRepository
 
-	if cfg.RAGEnabled && cfg.OpenAIBaseURL != "" && cfg.OpenAIAPIKey != "" {
-		log.Println("Initializing RAG service...")
+	if cfg.RAGEnabled && cfg.NIMAPIKey != "" {
+		log.Println("Initializing RAG service with NVIDIA NIM embeddings...")
 
-		// Create embedding service
-		embeddingService := services.NewEmbeddingService(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.EmbeddingModel)
+		// Create NIM embedding service
+		embeddingService := services.NewEmbeddingService(
+			cfg.NIMBaseURL,
+			cfg.NIMAPIKey,
+			cfg.NIMModel,
+			cfg.NIMRPMLimit,
+			cfg.NIMEmbeddingDim,
+		)
 
 		// Create FTS repository and initialize tables
 		ftsRepo := repository.NewFTSRepository(db)
@@ -84,15 +89,13 @@ func main() {
 			}
 		}
 
-		// Create vector repository
+		// Create vector repository (uses EmbedPassage for indexing, EmbedQuery for search)
 		vRepo, err := repository.NewVectorRepository(
 			repository.VectorConfig{
 				PersistPath: cfg.VectorDBPath,
 				Dimension:   embeddingService.GetDimension(),
 			},
-			func(ctx context.Context, text string) ([]float32, error) {
-				return embeddingService.Embed(ctx, text)
-			},
+			embeddingService,
 		)
 		if err != nil {
 			log.Printf("Warning: Failed to create vector repository: %v", err)
@@ -108,10 +111,11 @@ func main() {
 				aiService,
 				aiProviderService,
 			)
-			log.Printf("RAG service initialized with embedding model: %s", cfg.EmbeddingModel)
+			log.Printf("RAG service initialized with NIM embedding model: %s (dim=%d, rpm=%d)",
+				cfg.NIMModel, cfg.NIMEmbeddingDim, cfg.NIMRPMLimit)
 		}
 	} else {
-		log.Println("RAG service not enabled - set OPENAI_BASE_URL and OPENAI_API_KEY to enable")
+		log.Println("RAG service not enabled - set NIM_API_KEY to enable")
 	}
 
 	// Initialize todo and memory services (with RAG integration)

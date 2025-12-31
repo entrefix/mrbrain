@@ -26,8 +26,10 @@ const (
 	DimensionOpenAISmall = 1536
 	// OpenAI text-embedding-3-large
 	DimensionOpenAILarge = 3072
-	// Default dimension (OpenAI small)
-	DimensionDefault = DimensionOpenAISmall
+	// NVIDIA NIM nv-embedqa-e5-v5
+	DimensionNIM = 1024
+	// Default dimension (NIM)
+	DimensionDefault = DimensionNIM
 )
 
 // Document represents a piece of content to be indexed/searched

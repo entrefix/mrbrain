@@ -15,16 +15,24 @@ import (
 	"github.com/todomyday/backend/internal/models"
 )
 
+// EmbeddingService interface for generating embeddings
+type EmbeddingService interface {
+	EmbedPassage(ctx context.Context, text string) ([]float32, error)
+	EmbedQuery(ctx context.Context, text string) ([]float32, error)
+	IsConfigured() bool
+}
+
 // VectorRepository handles vector storage and similarity search using chromem-go
 type VectorRepository struct {
-	db           *chromem.DB
-	collection   *chromem.Collection
-	persistPath  string
-	embeddingFn  chromem.EmbeddingFunc
-	mu           sync.RWMutex
-	dimension    int
-	lastIndexed  *time.Time
-	documentMap  map[string]*models.Document // In-memory cache for quick lookups
+	db              *chromem.DB
+	collection      *chromem.Collection
+	persistPath     string
+	embeddingFn     chromem.EmbeddingFunc
+	embeddingSvc    EmbeddingService
+	mu              sync.RWMutex
+	dimension       int
+	lastIndexed     *time.Time
+	documentMap     map[string]*models.Document // In-memory cache for quick lookups
 }
 
 // VectorConfig holds configuration for the vector repository
@@ -34,20 +42,21 @@ type VectorConfig struct {
 }
 
 // NewVectorRepository creates a new vector repository with chromem-go
-func NewVectorRepository(cfg VectorConfig, embeddingFn func(ctx context.Context, text string) ([]float32, error)) (*VectorRepository, error) {
+func NewVectorRepository(cfg VectorConfig, embeddingSvc EmbeddingService) (*VectorRepository, error) {
 	if cfg.Dimension <= 0 {
 		cfg.Dimension = models.DimensionDefault
 	}
 
 	repo := &VectorRepository{
-		persistPath: cfg.PersistPath,
-		dimension:   cfg.Dimension,
-		documentMap: make(map[string]*models.Document),
+		persistPath:  cfg.PersistPath,
+		dimension:    cfg.Dimension,
+		documentMap:  make(map[string]*models.Document),
+		embeddingSvc: embeddingSvc,
 	}
 
-	// Create the embedding function adapter for chromem-go
+	// Create the embedding function adapter for chromem-go (uses passage type for indexing)
 	repo.embeddingFn = func(ctx context.Context, text string) ([]float32, error) {
-		return embeddingFn(ctx, text)
+		return embeddingSvc.EmbedPassage(ctx, text)
 	}
 
 	// Initialize chromem-go database
@@ -121,7 +130,7 @@ func (r *VectorRepository) Add(ctx context.Context, doc *models.Document) error 
 		Metadata: metadata,
 	}
 
-	// Add to collection (chromem-go will generate the embedding)
+	// Add to collection (chromem-go will generate the embedding using passage type)
 	err := r.collection.AddDocument(ctx, chromemDoc)
 	if err != nil {
 		return fmt.Errorf("failed to add document: %w", err)
@@ -189,7 +198,7 @@ func (r *VectorRepository) AddBatch(ctx context.Context, docs []*models.Document
 	return nil
 }
 
-// Search performs similarity search
+// Search performs similarity search using query-optimized embedding
 func (r *VectorRepository) Search(ctx context.Context, query string, limit int, filters map[string]string) ([]models.SearchResult, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -213,8 +222,14 @@ func (r *VectorRepository) Search(ctx context.Context, query string, limit int, 
 		whereFilter = filters
 	}
 
-	// Perform the query
-	results, err := r.collection.Query(ctx, query, limit, whereFilter, nil)
+	// Generate query embedding using query-optimized embedding type
+	queryEmbedding, err := r.embeddingSvc.EmbedQuery(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
+	}
+
+	// Perform the query using pre-computed query embedding
+	results, err := r.collection.QueryEmbedding(ctx, queryEmbedding, limit, whereFilter, nil)
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
 	}

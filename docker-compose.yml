@@ -16,9 +16,14 @@ services:
       - SEARXNG_URLS=${SEARXNG_URLS}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3111}
       - VECTOR_DB_PATH=/data/vectors
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
       - RAG_ENABLED=${RAG_ENABLED:-true}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # NIM Embedding settings (required for RAG)
+      - NIM_API_KEY=${NIM_API_KEY}
+      - NIM_BASE_URL=${NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - NIM_MODEL=${NIM_MODEL:-nvidia/nv-embedqa-e5-v5}
+      - NIM_RPM_LIMIT=${NIM_RPM_LIMIT:-40}
+      - NIM_EMBEDDING_DIM=${NIM_EMBEDDING_DIM:-1024}
     volumes:
       - ./data:/data
     restart: unless-stopped

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,9 +21,15 @@ type Config struct {
 	AllowedOrigins []string
 	SearXNGURLs    []string
 	// RAG/Embedding settings
-	EmbeddingModel    string
-	VectorDBPath      string
-	RAGEnabled        bool
+	EmbeddingModel string
+	VectorDBPath   string
+	RAGEnabled     bool
+	// NIM Embedding settings
+	NIMAPIKey       string
+	NIMBaseURL      string
+	NIMModel        string
+	NIMRPMLimit     int
+	NIMEmbeddingDim int
 }
 
 func Load() (*Config, error) {
@@ -96,21 +103,51 @@ func Load() (*Config, error) {
 		vectorDBPath = "./data/vectors"
 	}
 
-	ragEnabled := os.Getenv("RAG_ENABLED") != "false" // Enabled by default if OpenAI is configured
+	ragEnabled := os.Getenv("RAG_ENABLED") != "false" // Enabled by default if NIM is configured
+
+	// NIM Embedding settings
+	nimBaseURL := os.Getenv("NIM_BASE_URL")
+	if nimBaseURL == "" {
+		nimBaseURL = "https://integrate.api.nvidia.com/v1"
+	}
+
+	nimModel := os.Getenv("NIM_MODEL")
+	if nimModel == "" {
+		nimModel = "nvidia/nv-embedqa-e5-v5"
+	}
+
+	nimRPMLimit := 40
+	if rpmStr := os.Getenv("NIM_RPM_LIMIT"); rpmStr != "" {
+		if rpm, err := strconv.Atoi(rpmStr); err == nil && rpm > 0 {
+			nimRPMLimit = rpm
+		}
+	}
+
+	nimEmbeddingDim := 1024
+	if dimStr := os.Getenv("NIM_EMBEDDING_DIM"); dimStr != "" {
+		if dim, err := strconv.Atoi(dimStr); err == nil && dim > 0 {
+			nimEmbeddingDim = dim
+		}
+	}
 
 	return &Config{
-		Port:           port,
-		DatabasePath:   dbPath,
-		JWTSecret:      os.Getenv("JWT_SECRET"),
-		JWTExpiration:  expDuration,
-		EncryptionKey:  encryptionKey,
-		OpenAIBaseURL:  os.Getenv("OPENAI_BASE_URL"),
-		OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),
-		OpenAIModel:    openaiModel,
-		AllowedOrigins: origins,
-		SearXNGURLs:    searxngURLs,
-		EmbeddingModel: embeddingModel,
-		VectorDBPath:   vectorDBPath,
-		RAGEnabled:     ragEnabled,
+		Port:            port,
+		DatabasePath:    dbPath,
+		JWTSecret:       os.Getenv("JWT_SECRET"),
+		JWTExpiration:   expDuration,
+		EncryptionKey:   encryptionKey,
+		OpenAIBaseURL:   os.Getenv("OPENAI_BASE_URL"),
+		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
+		OpenAIModel:     openaiModel,
+		AllowedOrigins:  origins,
+		SearXNGURLs:     searxngURLs,
+		EmbeddingModel:  embeddingModel,
+		VectorDBPath:    vectorDBPath,
+		RAGEnabled:      ragEnabled,
+		NIMAPIKey:       os.Getenv("NIM_API_KEY"),
+		NIMBaseURL:      nimBaseURL,
+		NIMModel:        nimModel,
+		NIMRPMLimit:     nimRPMLimit,
+		NIMEmbeddingDim: nimEmbeddingDim,
 	}, nil
 }

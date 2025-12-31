@@ -9,27 +9,46 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/todomyday/backend/internal/models"
 )
 
-// EmbeddingService handles generating embeddings from various AI providers
+// InputType represents the type of input for NIM embeddings
+type InputType string
+
+const (
+	// InputTypePassage is used for documents/passages being indexed
+	InputTypePassage InputType = "passage"
+	// InputTypeQuery is used for search queries
+	InputTypeQuery InputType = "query"
+)
+
+// EmbeddingService handles generating embeddings using NVIDIA NIM API
 type EmbeddingService struct {
-	baseURL   string
-	apiKey    string
-	model     string
-	dimension int
-	client    *http.Client
+	baseURL     string
+	apiKey      string
+	model       string
+	dimension   int
+	minInterval time.Duration
+	client      *http.Client
+
+	// Rate limiting
+	mu              sync.Mutex
+	lastRequestTime time.Time
 }
 
-// OpenAI embedding request/response types
-type openAIEmbeddingRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
+// NIM embedding request type
+type nimEmbeddingRequest struct {
+	Model          string `json:"model"`
+	Input          string `json:"input"`
+	InputType      string `json:"input_type"`
+	EncodingFormat string `json:"encoding_format"`
 }
 
-type openAIEmbeddingResponse struct {
+// NIM embedding response type
+type nimEmbeddingResponse struct {
 	Data []struct {
 		Embedding []float32 `json:"embedding"`
 		Index     int       `json:"index"`
@@ -41,24 +60,31 @@ type openAIEmbeddingResponse struct {
 	} `json:"usage"`
 }
 
-// NewEmbeddingService creates a new embedding service with default config
-func NewEmbeddingService(baseURL, apiKey, model string) *EmbeddingService {
+// NewEmbeddingService creates a new NIM embedding service
+func NewEmbeddingService(baseURL, apiKey, model string, rpmLimit, dimension int) *EmbeddingService {
 	if model == "" {
-		model = "text-embedding-3-small"
+		model = "nvidia/nv-embedqa-e5-v5"
 	}
 
-	dimension := models.DimensionDefault
-	if strings.Contains(model, "3-large") {
-		dimension = models.DimensionOpenAILarge
+	if dimension <= 0 {
+		dimension = models.DimensionNIM
 	}
+
+	if rpmLimit <= 0 {
+		rpmLimit = 40
+	}
+
+	// Calculate minimum interval between requests (60 seconds / RPM limit)
+	minInterval := time.Duration(float64(time.Minute) / float64(rpmLimit))
 
 	return &EmbeddingService{
-		baseURL:   strings.TrimSuffix(baseURL, "/"),
-		apiKey:    apiKey,
-		model:     model,
-		dimension: dimension,
+		baseURL:     strings.TrimSuffix(baseURL, "/"),
+		apiKey:      apiKey,
+		model:       model,
+		dimension:   dimension,
+		minInterval: minInterval,
 		client: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 30 * time.Second,
 		},
 	}
 }
@@ -78,49 +104,64 @@ func (s *EmbeddingService) GetModel() string {
 	return s.model
 }
 
-// Embed generates an embedding for a single text
-func (s *EmbeddingService) Embed(ctx context.Context, text string) ([]float32, error) {
-	embeddings, err := s.EmbedBatch(ctx, []string{text})
-	if err != nil {
-		return nil, err
+// rateLimit enforces rate limiting
+func (s *EmbeddingService) rateLimit() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	elapsed := now.Sub(s.lastRequestTime)
+
+	if elapsed < s.minInterval {
+		sleepDuration := s.minInterval - elapsed
+		time.Sleep(sleepDuration)
 	}
-	if len(embeddings) == 0 {
-		return nil, fmt.Errorf("no embedding returned")
-	}
-	return embeddings[0], nil
+
+	s.lastRequestTime = time.Now()
 }
 
-// EmbedBatch generates embeddings for multiple texts
-func (s *EmbeddingService) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+// Embed generates an embedding for a single text (defaults to passage type)
+func (s *EmbeddingService) Embed(ctx context.Context, text string) ([]float32, error) {
+	return s.EmbedWithType(ctx, text, InputTypePassage)
+}
+
+// EmbedQuery generates an embedding optimized for search queries
+func (s *EmbeddingService) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	return s.EmbedWithType(ctx, text, InputTypeQuery)
+}
+
+// EmbedPassage generates an embedding optimized for document passages
+func (s *EmbeddingService) EmbedPassage(ctx context.Context, text string) ([]float32, error) {
+	return s.EmbedWithType(ctx, text, InputTypePassage)
+}
+
+// EmbedWithType generates an embedding with the specified input type
+func (s *EmbeddingService) EmbedWithType(ctx context.Context, text string, inputType InputType) ([]float32, error) {
 	if !s.IsConfigured() {
 		return nil, fmt.Errorf("embedding service not configured")
 	}
 
-	if len(texts) == 0 {
-		return [][]float32{}, nil
+	// Sanitize the text
+	text = SanitizeText(text)
+
+	if text == "" || len(text) < 10 {
+		return nil, fmt.Errorf("text too short or empty after sanitization")
 	}
 
-	// Clean and prepare texts
-	cleanedTexts := make([]string, len(texts))
-	for i, text := range texts {
-		// Truncate long texts (OpenAI has a token limit)
-		if len(text) > 8000 {
-			text = text[:8000]
-		}
-		// Replace newlines with spaces for better embedding
-		text = strings.ReplaceAll(text, "\n", " ")
-		text = strings.TrimSpace(text)
-		if text == "" {
-			text = " " // OpenAI doesn't accept empty strings
-		}
-		cleanedTexts[i] = text
-	}
+	// Truncate if too long
+	text = TruncateForEmbedding(text)
 
-	log.Printf("[Embedding] Generating embeddings for %d texts using model %s", len(texts), s.model)
+	// Enforce rate limiting
+	s.rateLimit()
 
-	reqBody := openAIEmbeddingRequest{
-		Model: s.model,
-		Input: cleanedTexts,
+	log.Printf("[Embedding] Generating embedding using model %s (type: %s, len: %d)",
+		s.model, inputType, len(text))
+
+	reqBody := nimEmbeddingRequest{
+		Model:          s.model,
+		Input:          text,
+		InputType:      string(inputType),
+		EncodingFormat: "float",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -150,136 +191,69 @@ func (s *EmbeddingService) EmbedBatch(ctx context.Context, texts []string) ([][]
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("[Embedding] Error response: %s", string(body))
-		return nil, fmt.Errorf("embedding API error: %s - %s", resp.Status, string(body))
+		log.Printf("[Embedding] Failed text (first 200 chars): %s", truncateString(text, 200))
+		return nil, fmt.Errorf("NIM API error: %s - %s", resp.Status, string(body))
 	}
 
-	var embeddingResp openAIEmbeddingResponse
+	var embeddingResp nimEmbeddingResponse
 	if err := json.Unmarshal(body, &embeddingResp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	if len(embeddingResp.Data) != len(texts) {
-		return nil, fmt.Errorf("expected %d embeddings, got %d", len(texts), len(embeddingResp.Data))
+	if len(embeddingResp.Data) == 0 {
+		return nil, fmt.Errorf("no embedding returned")
 	}
 
-	// Sort by index to ensure correct order
-	embeddings := make([][]float32, len(texts))
-	for _, data := range embeddingResp.Data {
-		if data.Index >= 0 && data.Index < len(embeddings) {
-			embeddings[data.Index] = data.Embedding
-		}
-	}
+	embedding := embeddingResp.Data[0].Embedding
+	log.Printf("[Embedding] Successfully generated embedding (dimension: %d, tokens: %d)",
+		len(embedding), embeddingResp.Usage.TotalTokens)
 
-	log.Printf("[Embedding] Successfully generated %d embeddings (dimension: %d, tokens: %d)",
-		len(embeddings), len(embeddings[0]), embeddingResp.Usage.TotalTokens)
-
-	return embeddings, nil
+	return embedding, nil
 }
 
-// EmbedWithProvider generates embeddings using a specific provider config
-func (s *EmbeddingService) EmbedWithProvider(ctx context.Context, texts []string, config *AIProviderConfig) ([][]float32, error) {
-	if config == nil || config.BaseURL == "" || config.APIKey == "" {
-		return nil, fmt.Errorf("invalid provider config")
+// EmbedBatch generates embeddings for multiple texts (one at a time with rate limiting)
+func (s *EmbeddingService) EmbedBatch(ctx context.Context, texts []string, inputType InputType) ([][]float32, error) {
+	if !s.IsConfigured() {
+		return nil, fmt.Errorf("embedding service not configured")
 	}
 
-	// For now, we only support OpenAI-compatible embedding APIs
-	// Anthropic and Google have different embedding endpoints
-	switch config.ProviderType {
-	case models.ProviderTypeOpenAI, models.ProviderTypeCustom:
-		// Create a temporary service with the provider config
-		tempService := &EmbeddingService{
-			baseURL:   strings.TrimSuffix(config.BaseURL, "/"),
-			apiKey:    config.APIKey,
-			model:     "text-embedding-3-small", // Default embedding model
-			dimension: models.DimensionDefault,
-			client:    s.client,
-		}
-		return tempService.EmbedBatch(ctx, texts)
-
-	case models.ProviderTypeAnthropic:
-		// Anthropic doesn't have a public embedding API yet
-		// Fall back to default service
-		log.Printf("[Embedding] Anthropic doesn't support embeddings, falling back to default")
-		return s.EmbedBatch(ctx, texts)
-
-	case models.ProviderTypeGoogle:
-		// Google has different embedding endpoint format
-		return s.embedWithGoogle(ctx, texts, config)
-
-	default:
-		return s.EmbedBatch(ctx, texts)
-	}
-}
-
-// embedWithGoogle handles Google's embedding API format
-func (s *EmbeddingService) embedWithGoogle(ctx context.Context, texts []string, config *AIProviderConfig) ([][]float32, error) {
-	// Google uses a different request format
-	type googleEmbedRequest struct {
-		Content struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
-		} `json:"content"`
-	}
-
-	type googleEmbedResponse struct {
-		Embedding struct {
-			Values []float32 `json:"values"`
-		} `json:"embedding"`
+	if len(texts) == 0 {
+		return [][]float32{}, nil
 	}
 
 	embeddings := make([][]float32, len(texts))
 
-	// Google API processes one text at a time
 	for i, text := range texts {
-		if len(text) > 8000 {
-			text = text[:8000]
-		}
-
-		reqBody := googleEmbedRequest{}
-		reqBody.Content.Parts = []struct {
-			Text string `json:"text"`
-		}{{Text: text}}
-
-		jsonBody, err := json.Marshal(reqBody)
+		embedding, err := s.EmbedWithType(ctx, text, inputType)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to embed text %d: %w", i, err)
 		}
-
-		// Google uses models/text-embedding-004 or similar
-		model := "text-embedding-004"
-		url := fmt.Sprintf("%s/models/%s:embedContent?key=%s",
-			strings.TrimSuffix(config.BaseURL, "/"),
-			model,
-			config.APIKey,
-		)
-
-		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := s.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return nil, fmt.Errorf("Google embedding API error: %s - %s", resp.Status, string(body))
-		}
-
-		var embedResp googleEmbedResponse
-		if err := json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
-			return nil, err
-		}
-
-		embeddings[i] = embedResp.Embedding.Values
+		embeddings[i] = embedding
 	}
 
 	return embeddings, nil
+}
+
+// HealthCheck checks if NIM API is accessible
+func (s *EmbeddingService) HealthCheck() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	url := s.baseURL + "/models"
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return false
+	}
+
+	req.Header.Set("Authorization", "Bearer "+s.apiKey)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK
 }
 
 // PrepareDocumentText creates a text representation of a document for embedding
@@ -307,37 +281,25 @@ func PrepareDocumentText(doc *models.Document) string {
 	return strings.Join(parts, "\n")
 }
 
-// ChunkText splits long text into chunks for embedding
-// Returns chunks that can be individually embedded
+// ChunkText splits long text into chunks for embedding using token-aware chunking
 func ChunkText(text string, maxChunkSize int) []string {
-	if maxChunkSize <= 0 {
-		maxChunkSize = 1000 // Default chunk size in characters
+	chunker := NewDocumentChunker(&ChunkerConfig{
+		MaxTokens: 450,
+	})
+
+	chunks := chunker.ChunkText(text)
+	result := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		result[i] = chunk.Text
 	}
 
-	if len(text) <= maxChunkSize {
-		return []string{text}
+	return result
+}
+
+// truncateString truncates a string to the specified length
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
 	}
-
-	var chunks []string
-	sentences := strings.Split(text, ". ")
-
-	var currentChunk strings.Builder
-	for _, sentence := range sentences {
-		if currentChunk.Len()+len(sentence)+2 > maxChunkSize {
-			if currentChunk.Len() > 0 {
-				chunks = append(chunks, strings.TrimSpace(currentChunk.String()))
-				currentChunk.Reset()
-			}
-		}
-		if currentChunk.Len() > 0 {
-			currentChunk.WriteString(". ")
-		}
-		currentChunk.WriteString(sentence)
-	}
-
-	if currentChunk.Len() > 0 {
-		chunks = append(chunks, strings.TrimSpace(currentChunk.String()))
-	}
-
-	return chunks
+	return s[:maxLen]
 }

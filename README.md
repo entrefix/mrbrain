@@ -67,10 +67,11 @@ The RAG system enables you to:
 - Highlighted snippets in search results
 
 **Embedding Service**
-- OpenAI-compatible embedding API support
-- Default model: `text-embedding-3-small` (1536 dimensions)
-- Also supports: `text-embedding-3-large`, custom models
-- Works with OpenAI, Google, Anthropic, and custom providers
+- NVIDIA NIM embedding API for vector search
+- Default model: `nvidia/nv-embedqa-e5-v5` (1024 dimensions)
+- Rate-limited to 40 requests per minute
+- Separate query/passage embeddings for optimal retrieval
+- Text sanitization for special characters and unicode
 
 **Hybrid Search Algorithm**
 - Combines vector similarity and keyword search results
@@ -165,12 +166,23 @@ npm run dev
 | `OPENAI_BASE_URL` | No | - | Default OpenAI API base URL |
 | `OPENAI_API_KEY` | No | - | Default OpenAI API key |
 | `OPENAI_MODEL` | No | `gpt-3.5-turbo` | Default model for AI features |
-| `EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model for RAG system |
 | `VECTOR_DB_PATH` | No | `./data/vectors` | Path for vector database storage |
 | `RAG_ENABLED` | No | `true` | Enable/disable RAG features |
 | `SEARXNG_URLS` | No | - | Comma-separated SearXNG instance URLs for web search |
 | `ALLOWED_ORIGINS` | No | `http://localhost:3111` | CORS allowed origins |
 | `VITE_API_URL` | No | `http://localhost:8099` | Backend API URL for frontend |
+
+### NIM Embedding Settings (Required for RAG)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NIM_API_KEY` | Yes* | - | NVIDIA NIM API key (get from https://build.nvidia.com) |
+| `NIM_BASE_URL` | No | `https://integrate.api.nvidia.com/v1` | NIM API base URL |
+| `NIM_MODEL` | No | `nvidia/nv-embedqa-e5-v5` | NIM embedding model |
+| `NIM_RPM_LIMIT` | No | `40` | Rate limit (requests per minute) |
+| `NIM_EMBEDDING_DIM` | No | `1024` | Embedding dimension |
+
+*Required if `RAG_ENABLED=true`
 
 ## API Endpoints
 
@@ -236,7 +248,7 @@ npm run dev
 - SQLite (modernc.org/sqlite - pure Go)
 - SQLite FTS5 (Full-Text Search)
 - chromem-go (Vector Database)
-- OpenAI Embeddings API
+- NVIDIA NIM Embeddings API
 - JWT Authentication
 - bcrypt Password Hashing
 

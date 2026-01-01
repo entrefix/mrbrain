@@ -14,7 +14,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-3.5-turbo}
       - SEARXNG_URLS=${SEARXNG_URLS}
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3111}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8080}
       - VECTOR_DB_PATH=/data/vectors
       - RAG_ENABLED=${RAG_ENABLED:-true}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -36,7 +36,7 @@ services:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8099}
     container_name: todomyday-frontend
     ports:
-      - "3111:80"
+      - "8080:80"
     depends_on:
       - backend
     restart: unless-stopped

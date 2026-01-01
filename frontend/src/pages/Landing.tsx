@@ -12,6 +12,17 @@ function Hero() {
           transition={{ duration: 0.6 }}
           className="text-center"
         >
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.05 }}
+            className="flex items-center justify-center gap-3 mb-6"
+          >
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
+              <img src="/logo-white.png" alt="Mr.Brain" className="w-6 h-6" />
+            </div>
+            <span className="text-xl font-heading text-gray-900 dark:text-white">memlane</span>
+          </motion.div>
           <motion.img
             src="/peek.png"
             alt="Peek"
@@ -34,56 +45,7 @@ function Hero() {
           </p>
 
           {/* Imposition text */}
-          <div className="mb-12 space-y-1 text-center">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.4 }}
-              className="text-2xl md:text-3xl font-heading text-gray-800 dark:text-gray-200"
-            >
-              Starting 2026, I will remember everything that matters
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.5 }}
-              className="text-xl md:text-2xl font-heading text-gray-700 dark:text-gray-300"
-            >
-              Starting 2026, I will remember everything that matters
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.6 }}
-              className="text-lg md:text-xl font-heading text-gray-600 dark:text-gray-400"
-            >
-              Starting 2026, I will remember everything that matters
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.7 }}
-              className="text-base md:text-lg font-heading text-gray-500 dark:text-gray-500"
-            >
-              Starting 2026, I will remember everything that matters
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.8 }}
-              className="text-sm md:text-base font-heading text-gray-400 dark:text-gray-600"
-            >
-              Starting 2026, I will remember everything that matters
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.9 }}
-              className="text-xs md:text-sm font-heading text-gray-400 dark:text-gray-600"
-            >
-              Starting 2026, I will remember everything that matters
-            </motion.div>
-          </div>
+
 
           <motion.div
             initial={{ opacity: 0, y: 20 }}

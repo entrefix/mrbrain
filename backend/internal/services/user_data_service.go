@@ -6,7 +6,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/todomyday/backend/internal/models"
 	"github.com/todomyday/backend/internal/repository"
 )
 
@@ -14,7 +13,6 @@ type UserDataService struct {
 	memoryRepo *repository.MemoryRepository
 	todoRepo   *repository.TodoRepository
 	groupRepo  *repository.GroupRepository
-	vectorRepo *repository.VectorRepository
 	ragService *RAGService
 }
 
@@ -22,14 +20,12 @@ func NewUserDataService(
 	memoryRepo *repository.MemoryRepository,
 	todoRepo *repository.TodoRepository,
 	groupRepo *repository.GroupRepository,
-	vectorRepo *repository.VectorRepository,
 	ragService *RAGService,
 ) *UserDataService {
 	return &UserDataService{
 		memoryRepo: memoryRepo,
 		todoRepo:   todoRepo,
 		groupRepo:  groupRepo,
-		vectorRepo: vectorRepo,
 		ragService: ragService,
 	}
 }
@@ -58,27 +54,18 @@ type DataStats struct {
 }
 
 // ClearAllMemories deletes all memories for a user
-// Deletion order: Vector DB → SQL DB → FTS (auto via trigger)
 func (s *UserDataService) ClearAllMemories(userID string) (*ClearMemoriesResult, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	_, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	log.Printf("[UserDataService] Starting ClearAllMemories for user: %s", userID)
 
 	result := &ClearMemoriesResult{Success: false}
 
-	// Step 1: Delete from Vector DB (graceful failure)
-	if s.ragService != nil && s.ragService.IsConfigured() && s.vectorRepo != nil {
-		log.Printf("[UserDataService] Deleting memories from vector DB for user: %s", userID)
-		if err := s.vectorRepo.DeleteByUser(ctx, userID, models.ContentTypeMemory); err != nil {
-			log.Printf("[UserDataService] Warning: Vector DB deletion failed: %v (continuing)", err)
-			// Don't fail - continue with SQL deletion
-		} else {
-			log.Printf("[UserDataService] Vector DB deletion successful")
-		}
-	}
+	// Note: ClaraVector documents are not deleted here since we don't track document IDs
+	// The next reindex will overwrite old data
 
-	// Step 2: Delete from SQL DB (authoritative)
+	// Delete from SQL DB (authoritative)
 	count, err := s.memoryRepo.CountByUserID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count memories: %w", err)
@@ -101,24 +88,17 @@ func (s *UserDataService) ClearAllMemories(userID string) (*ClearMemoriesResult,
 // Keeps: AI providers, default groups
 // Deletes: Custom groups, all todos, all memories
 func (s *UserDataService) ClearAllData(userID string) (*ClearAllResult, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	_, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	log.Printf("[UserDataService] Starting ClearAllData for user: %s", userID)
 
 	result := &ClearAllResult{Success: false}
 
-	// Step 1: Delete ALL vector embeddings for user (both todos and memories)
-	if s.ragService != nil && s.ragService.IsConfigured() && s.vectorRepo != nil {
-		log.Printf("[UserDataService] Deleting all vector embeddings for user: %s", userID)
-		if err := s.vectorRepo.DeleteAllByUser(ctx, userID); err != nil {
-			log.Printf("[UserDataService] Warning: Vector DB deletion failed: %v (continuing)", err)
-		} else {
-			log.Printf("[UserDataService] Vector DB deletion successful")
-		}
-	}
+	// Note: ClaraVector documents are not deleted here since we don't track document IDs
+	// The user can trigger a reindex to rebuild the vector index
 
-	// Step 2: Delete memories from SQL
+	// Delete memories from SQL
 	memoriesDeleted, err := s.memoryRepo.DeleteAllByUserID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to delete memories: %w", err)
@@ -126,7 +106,7 @@ func (s *UserDataService) ClearAllData(userID string) (*ClearAllResult, error) {
 	result.MemoriesDeleted = int(memoriesDeleted)
 	log.Printf("[UserDataService] Deleted %d memories", memoriesDeleted)
 
-	// Step 3: Delete todos from SQL
+	// Delete todos from SQL
 	todosDeleted, err := s.todoRepo.DeleteAllByUserID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to delete todos: %w", err)
@@ -134,7 +114,7 @@ func (s *UserDataService) ClearAllData(userID string) (*ClearAllResult, error) {
 	result.TodosDeleted = int(todosDeleted)
 	log.Printf("[UserDataService] Deleted %d todos", todosDeleted)
 
-	// Step 4: Delete custom groups (NOT default groups)
+	// Delete custom groups (NOT default groups)
 	groupsDeleted, err := s.groupRepo.DeleteAllCustomByUserID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to delete custom groups: %w", err)

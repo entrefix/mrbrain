@@ -62,60 +62,33 @@ func main() {
 		log.Println("AI service not configured - todos will use original titles")
 	}
 
-	// Initialize RAG components (before todo/memory services so they can use it)
+	// Initialize RAG service with ClaraVector
 	var ragService *services.RAGService
-	var vectorRepo *repository.VectorRepository
 
-	if cfg.RAGEnabled && cfg.NIMAPIKey != "" {
-		log.Println("Initializing RAG service with NVIDIA NIM embeddings...")
+	if cfg.RAGEnabled && cfg.ClaraVectorURL != "" {
+		log.Println("Initializing RAG service with ClaraVector...")
 
-		// Create NIM embedding service
-		embeddingService := services.NewEmbeddingService(
-			cfg.NIMBaseURL,
-			cfg.NIMAPIKey,
-			cfg.NIMModel,
-			cfg.NIMRPMLimit,
-			cfg.NIMEmbeddingDim,
-		)
+		// Create ClaraVector client
+		claraClient := services.NewClaraVectorClient(cfg.ClaraVectorURL, cfg.ClaraVectorAPIKey)
 
-		// Create FTS repository and initialize tables
-		ftsRepo := repository.NewFTSRepository(db)
-		if err := ftsRepo.InitFTSTables(); err != nil {
-			log.Printf("Warning: Failed to initialize FTS tables: %v", err)
+		// Check health
+		if err := claraClient.HealthCheck(); err != nil {
+			log.Printf("Warning: ClaraVector health check failed: %v", err)
 		} else {
-			// Populate FTS from existing data
-			if err := ftsRepo.PopulateFTSFromExisting(); err != nil {
-				log.Printf("Warning: Failed to populate FTS: %v", err)
-			}
+			log.Println("ClaraVector service is healthy")
 		}
 
-		// Create vector repository (uses EmbedPassage for indexing, EmbedQuery for search)
-		vRepo, err := repository.NewVectorRepository(
-			repository.VectorConfig{
-				PersistPath: cfg.VectorDBPath,
-				Dimension:   embeddingService.GetDimension(),
-			},
-			embeddingService,
+		// Create RAG service
+		ragService = services.NewRAGService(
+			claraClient,
+			todoRepo,
+			memoryRepo,
+			aiService,
+			aiProviderService,
 		)
-		if err != nil {
-			log.Printf("Warning: Failed to create vector repository: %v", err)
-		} else {
-			vectorRepo = vRepo
-			// Create RAG service
-			ragService = services.NewRAGService(
-				vectorRepo,
-				ftsRepo,
-				todoRepo,
-				memoryRepo,
-				embeddingService,
-				aiService,
-				aiProviderService,
-			)
-			log.Printf("RAG service initialized with NIM embedding model: %s (dim=%d, rpm=%d)",
-				cfg.NIMModel, cfg.NIMEmbeddingDim, cfg.NIMRPMLimit)
-		}
+		log.Printf("RAG service initialized with ClaraVector: %s", cfg.ClaraVectorURL)
 	} else {
-		log.Println("RAG service not enabled - set NIM_API_KEY to enable")
+		log.Println("RAG service not enabled - set RAG_ENABLED=true and CLARAVECTOR_URL to enable")
 	}
 
 	// Initialize todo and memory services (with RAG integration)
@@ -123,7 +96,7 @@ func main() {
 	memoryService := services.NewMemoryService(memoryRepo, todoRepo, aiService, aiProviderService, scraperService, ragService)
 
 	// Initialize user data service (for data management)
-	userDataService := services.NewUserDataService(memoryRepo, todoRepo, groupRepo, vectorRepo, ragService)
+	userDataService := services.NewUserDataService(memoryRepo, todoRepo, groupRepo, ragService)
 
 	// Initialize file parser service
 	fileParserService := services.NewFileParserService()

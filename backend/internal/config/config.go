@@ -2,7 +2,6 @@ package config
 
 import (
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,16 +19,11 @@ type Config struct {
 	OpenAIModel    string
 	AllowedOrigins []string
 	SearXNGURLs    []string
-	// RAG/Embedding settings
-	EmbeddingModel string
-	VectorDBPath   string
-	RAGEnabled     bool
-	// NIM Embedding settings
-	NIMAPIKey       string
-	NIMBaseURL      string
-	NIMModel        string
-	NIMRPMLimit     int
-	NIMEmbeddingDim int
+	// RAG settings
+	RAGEnabled bool
+	// ClaraVector settings
+	ClaraVectorURL    string
+	ClaraVectorAPIKey string
 }
 
 func Load() (*Config, error) {
@@ -92,62 +86,26 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// RAG/Embedding settings
-	embeddingModel := os.Getenv("EMBEDDING_MODEL")
-	if embeddingModel == "" {
-		embeddingModel = "text-embedding-3-small"
-	}
+	// RAG settings
+	ragEnabled := os.Getenv("RAG_ENABLED") == "true"
 
-	vectorDBPath := os.Getenv("VECTOR_DB_PATH")
-	if vectorDBPath == "" {
-		vectorDBPath = "./data/vectors"
-	}
-
-	ragEnabled := os.Getenv("RAG_ENABLED") != "false" // Enabled by default if NIM is configured
-
-	// NIM Embedding settings
-	nimBaseURL := os.Getenv("NIM_BASE_URL")
-	if nimBaseURL == "" {
-		nimBaseURL = "https://integrate.api.nvidia.com/v1"
-	}
-
-	nimModel := os.Getenv("NIM_MODEL")
-	if nimModel == "" {
-		nimModel = "nvidia/nv-embedqa-e5-v5"
-	}
-
-	nimRPMLimit := 40
-	if rpmStr := os.Getenv("NIM_RPM_LIMIT"); rpmStr != "" {
-		if rpm, err := strconv.Atoi(rpmStr); err == nil && rpm > 0 {
-			nimRPMLimit = rpm
-		}
-	}
-
-	nimEmbeddingDim := 1024
-	if dimStr := os.Getenv("NIM_EMBEDDING_DIM"); dimStr != "" {
-		if dim, err := strconv.Atoi(dimStr); err == nil && dim > 0 {
-			nimEmbeddingDim = dim
-		}
-	}
+	// ClaraVector settings
+	claraVectorURL := os.Getenv("CLARAVECTOR_URL")
+	claraVectorAPIKey := os.Getenv("CLARAVECTOR_API_KEY")
 
 	return &Config{
-		Port:            port,
-		DatabasePath:    dbPath,
-		JWTSecret:       os.Getenv("JWT_SECRET"),
-		JWTExpiration:   expDuration,
-		EncryptionKey:   encryptionKey,
-		OpenAIBaseURL:   os.Getenv("OPENAI_BASE_URL"),
-		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
-		OpenAIModel:     openaiModel,
-		AllowedOrigins:  origins,
-		SearXNGURLs:     searxngURLs,
-		EmbeddingModel:  embeddingModel,
-		VectorDBPath:    vectorDBPath,
-		RAGEnabled:      ragEnabled,
-		NIMAPIKey:       os.Getenv("NIM_API_KEY"),
-		NIMBaseURL:      nimBaseURL,
-		NIMModel:        nimModel,
-		NIMRPMLimit:     nimRPMLimit,
-		NIMEmbeddingDim: nimEmbeddingDim,
+		Port:              port,
+		DatabasePath:      dbPath,
+		JWTSecret:         os.Getenv("JWT_SECRET"),
+		JWTExpiration:     expDuration,
+		EncryptionKey:     encryptionKey,
+		OpenAIBaseURL:     os.Getenv("OPENAI_BASE_URL"),
+		OpenAIAPIKey:      os.Getenv("OPENAI_API_KEY"),
+		OpenAIModel:       openaiModel,
+		AllowedOrigins:    origins,
+		SearXNGURLs:       searxngURLs,
+		RAGEnabled:        ragEnabled,
+		ClaraVectorURL:    claraVectorURL,
+		ClaraVectorAPIKey: claraVectorAPIKey,
 	}, nil
 }

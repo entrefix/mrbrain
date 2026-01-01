@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,223 +14,212 @@ import (
 	"github.com/todomyday/backend/internal/repository"
 )
 
-// RAGService provides Retrieval-Augmented Generation capabilities
+// RAGService provides Retrieval-Augmented Generation capabilities using ClaraVector
 type RAGService struct {
-	vectorRepo       *repository.VectorRepository
-	ftsRepo          *repository.FTSRepository
-	todoRepo         *repository.TodoRepository
-	memoryRepo       *repository.MemoryRepository
-	embeddingService *EmbeddingService
-	aiService        *AIService
-	aiProviderSvc    *AIProviderService
-}
-
-// RAGConfig holds configuration for the RAG service
-type RAGConfig struct {
-	VectorPersistPath  string
-	EmbeddingDimension int
+	claraClient   *ClaraVectorClient
+	todoRepo      *repository.TodoRepository
+	memoryRepo    *repository.MemoryRepository
+	aiService     *AIService
+	aiProviderSvc *AIProviderService
 }
 
 // NewRAGService creates a new RAG service
 func NewRAGService(
-	vectorRepo *repository.VectorRepository,
-	ftsRepo *repository.FTSRepository,
+	claraClient *ClaraVectorClient,
 	todoRepo *repository.TodoRepository,
 	memoryRepo *repository.MemoryRepository,
-	embeddingService *EmbeddingService,
 	aiService *AIService,
 	aiProviderSvc *AIProviderService,
 ) *RAGService {
 	return &RAGService{
-		vectorRepo:       vectorRepo,
-		ftsRepo:          ftsRepo,
-		todoRepo:         todoRepo,
-		memoryRepo:       memoryRepo,
-		embeddingService: embeddingService,
-		aiService:        aiService,
-		aiProviderSvc:    aiProviderSvc,
+		claraClient:   claraClient,
+		todoRepo:      todoRepo,
+		memoryRepo:    memoryRepo,
+		aiService:     aiService,
+		aiProviderSvc: aiProviderSvc,
 	}
 }
 
 // IsConfigured returns true if RAG service is properly configured
 func (s *RAGService) IsConfigured() bool {
-	return s.embeddingService != nil && s.embeddingService.IsConfigured() && s.vectorRepo != nil
+	return s.claraClient != nil && s.claraClient.IsConfigured()
 }
 
 // ==========================================
-// Hybrid Search
+// Search
 // ==========================================
 
-// Search performs hybrid search combining vector similarity and keyword matching
+// Search performs semantic search using ClaraVector
 func (s *RAGService) Search(ctx context.Context, userID string, req *models.SearchRequest) (*models.SearchResponse, error) {
 	startTime := time.Now()
 
 	if req.Limit <= 0 {
 		req.Limit = 10
 	}
-	if req.VectorWeight <= 0 {
-		req.VectorWeight = 0.7 // Default: favor vector search
+
+	log.Printf("[RAG] Search: user=%s, query=%q, limit=%d", userID, req.Query, req.Limit)
+
+	// Parse userID to uint
+	userIDUint, err := strconv.ParseUint(userID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid user ID: %w", err)
 	}
 
-	log.Printf("[RAG] Hybrid search: user=%s, query=%q, limit=%d, vector_weight=%.2f",
-		userID, req.Query, req.Limit, req.VectorWeight)
-
-	var vectorResults, keywordResults []models.SearchResult
-	var vecErr, ftsErr error
-
-	// Run vector and keyword search in parallel
-	done := make(chan bool, 2)
-
-	// Vector search
-	go func() {
-		if s.vectorRepo != nil && s.embeddingService.IsConfigured() {
-			vectorResults, vecErr = s.vectorRepo.SearchByUser(ctx, userID, req.Query, req.Limit*2, req.ContentTypes)
-		}
-		done <- true
-	}()
-
-	// Keyword search
-	go func() {
-		if s.ftsRepo != nil {
-			keywordResults, ftsErr = s.ftsRepo.SearchWithHighlights(userID, req.Query, req.ContentTypes, req.Limit*2)
-		}
-		done <- true
-	}()
-
-	// Wait for both
-	<-done
-	<-done
-
-	if vecErr != nil {
-		log.Printf("[RAG] Vector search error: %v", vecErr)
-	}
-	if ftsErr != nil {
-		log.Printf("[RAG] Keyword search error: %v", ftsErr)
+	// Query ClaraVector
+	results, err := s.claraClient.QueryUser(uint(userIDUint), req.Query, req.Limit)
+	if err != nil {
+		log.Printf("[RAG] ClaraVector query error: %v", err)
+		return &models.SearchResponse{
+			Results:    []models.SearchResult{},
+			Query:      req.Query,
+			TotalCount: 0,
+			TimeTaken:  float64(time.Since(startTime).Milliseconds()),
+		}, nil
 	}
 
-	// Combine results using Reciprocal Rank Fusion
-	combined := s.reciprocalRankFusion(vectorResults, keywordResults, req.VectorWeight)
-
-	// Limit results
-	if len(combined) > req.Limit {
-		combined = combined[:req.Limit]
+	if len(results) == 0 {
+		return &models.SearchResponse{
+			Results:    []models.SearchResult{},
+			Query:      req.Query,
+			TotalCount: 0,
+			TimeTaken:  float64(time.Since(startTime).Milliseconds()),
+		}, nil
 	}
 
-	// Enrich results with full document data
-	enriched := s.enrichSearchResults(ctx, userID, combined)
+	// Convert ClaraVector results to our format and enrich
+	searchResults := s.convertAndEnrichResults(ctx, userID, results, req.ContentTypes)
 
 	return &models.SearchResponse{
-		Results:    enriched,
+		Results:    searchResults,
 		Query:      req.Query,
-		TotalCount: len(enriched),
+		TotalCount: len(searchResults),
 		TimeTaken:  float64(time.Since(startTime).Milliseconds()),
 	}, nil
 }
 
-// reciprocalRankFusion combines results from multiple search methods
-func (s *RAGService) reciprocalRankFusion(vectorResults, keywordResults []models.SearchResult, vectorWeight float64) []models.SearchResult {
-	const k = 60.0 // RRF constant
+// convertAndEnrichResults converts ClaraVector results and enriches with local data
+func (s *RAGService) convertAndEnrichResults(ctx context.Context, userID string, results []ClaraVectorQueryResult, contentTypes []string) []models.SearchResult {
+	searchResults := make([]models.SearchResult, 0, len(results))
 
-	// Map to track combined scores by content_id
-	scoreMap := make(map[string]float64)
-	docMap := make(map[string]*models.SearchResult)
-
-	// Add vector results
-	for i, result := range vectorResults {
-		key := fmt.Sprintf("%s-%s", result.Document.ContentType, result.Document.ContentID)
-		rrf := vectorWeight * (1.0 / (k + float64(i+1)))
-		scoreMap[key] += rrf
-		if _, exists := docMap[key]; !exists {
-			r := result
-			r.MatchType = "vector"
-			docMap[key] = &r
-		}
-	}
-
-	// Add keyword results
-	keywordWeight := 1.0 - vectorWeight
-	for i, result := range keywordResults {
-		key := fmt.Sprintf("%s-%s", result.Document.ContentType, result.Document.ContentID)
-		rrf := keywordWeight * (1.0 / (k + float64(i+1)))
-		scoreMap[key] += rrf
-
-		if existing, exists := docMap[key]; exists {
-			existing.MatchType = "hybrid"
-			// Merge highlights
-			if len(result.Highlights) > 0 {
-				existing.Highlights = append(existing.Highlights, result.Highlights...)
-			}
-		} else {
-			r := result
-			r.MatchType = "keyword"
-			docMap[key] = &r
-		}
-	}
-
-	// Convert to slice and sort by combined score
-	var combined []models.SearchResult
-	for key, result := range docMap {
-		result.Score = scoreMap[key]
-		combined = append(combined, *result)
-	}
-
-	sort.Slice(combined, func(i, j int) bool {
-		return combined[i].Score > combined[j].Score
-	})
-
-	return combined
-}
-
-// enrichSearchResults adds full document data to search results
-func (s *RAGService) enrichSearchResults(ctx context.Context, userID string, results []models.SearchResult) []models.SearchResult {
-	enriched := make([]models.SearchResult, 0, len(results))
+	// Get all todos and memories for the user to match against
+	todos, _ := s.todoRepo.GetAllByUserID(userID)
+	memories, _ := s.memoryRepo.GetAllByUserID(userID, 1000, 0)
 
 	for _, result := range results {
-		switch result.Document.ContentType {
-		case models.ContentTypeTodo:
-			if todo, _ := s.todoRepo.GetByID(result.Document.ContentID); todo != nil {
-				result.Document.Title = todo.Title
-				if todo.Description != nil {
-					result.Document.Content = *todo.Description
-				}
-				result.Document.Metadata = map[string]string{
-					"priority": string(todo.Priority),
-					"status":   string(todo.Status),
-				}
-				if todo.GroupID != nil {
-					result.Document.Metadata["group_id"] = *todo.GroupID
-				}
-				if len(todo.Tags) > 0 {
-					tagsJSON, _ := json.Marshal(todo.Tags)
-					result.Document.Metadata["tags"] = string(tagsJSON)
-				}
-				if todo.DueDate != nil {
-					result.Document.Metadata["due_date"] = *todo.DueDate
-				}
-			}
+		// Try to match the result text to a todo or memory
+		var matched bool
 
-		case models.ContentTypeMemory:
-			if memory, _ := s.memoryRepo.GetByID(result.Document.ContentID); memory != nil {
-				result.Document.Content = memory.Content
-				if memory.URLTitle != nil {
-					result.Document.Title = *memory.URLTitle
+		// Check if we should filter by content type
+		filterTodos := len(contentTypes) == 0 || containsString(contentTypes, "todo")
+		filterMemories := len(contentTypes) == 0 || containsString(contentTypes, "memory")
+
+		// Try matching against todos
+		if filterTodos {
+			for _, todo := range todos {
+				content := todo.Title
+				if todo.Description != nil {
+					content += "\n" + *todo.Description
 				}
-				result.Document.Metadata = map[string]string{
-					"category": memory.Category,
-				}
-				if memory.Summary != nil {
-					result.Document.Metadata["summary"] = *memory.Summary
-				}
-				if memory.URL != nil {
-					result.Document.Metadata["url"] = *memory.URL
+				if strings.Contains(content, result.Text) || strings.Contains(result.Text, todo.Title) {
+					doc := &models.Document{
+						ContentType: models.ContentTypeTodo,
+						ContentID:   todo.ID,
+						UserID:      todo.UserID,
+						Title:       todo.Title,
+						Metadata:    make(map[string]string),
+					}
+					if todo.Description != nil {
+						doc.Content = *todo.Description
+					}
+					doc.Metadata["priority"] = string(todo.Priority)
+					doc.Metadata["status"] = string(todo.Status)
+					if todo.GroupID != nil {
+						doc.Metadata["group_id"] = *todo.GroupID
+					}
+					if len(todo.Tags) > 0 {
+						tagsJSON, _ := json.Marshal(todo.Tags)
+						doc.Metadata["tags"] = string(tagsJSON)
+					}
+					if todo.DueDate != nil {
+						doc.Metadata["due_date"] = *todo.DueDate
+					}
+					sr := models.SearchResult{
+						Document:   doc,
+						Score:      1.0 - result.SimilarityScore, // Lower similarity = better match
+						MatchType:  "vector",
+						Highlights: []string{result.Text},
+					}
+					searchResults = append(searchResults, sr)
+					matched = true
+					break
 				}
 			}
 		}
 
-		enriched = append(enriched, result)
+		// Try matching against memories if not matched to todo
+		if !matched && filterMemories {
+			for _, memory := range memories {
+				content := memory.Content
+				if memory.Summary != nil {
+					content += "\n" + *memory.Summary
+				}
+				if strings.Contains(content, result.Text) || strings.Contains(result.Text, memory.Content[:min(len(memory.Content), 100)]) {
+					doc := &models.Document{
+						ContentType: models.ContentTypeMemory,
+						ContentID:   memory.ID,
+						UserID:      memory.UserID,
+						Content:     memory.Content,
+						Metadata:    make(map[string]string),
+					}
+					if memory.URLTitle != nil {
+						doc.Title = *memory.URLTitle
+					}
+					doc.Metadata["category"] = memory.Category
+					if memory.Summary != nil {
+						doc.Metadata["summary"] = *memory.Summary
+					}
+					if memory.URL != nil {
+						doc.Metadata["url"] = *memory.URL
+					}
+					sr := models.SearchResult{
+						Document:   doc,
+						Score:      1.0 - result.SimilarityScore,
+						MatchType:  "vector",
+						Highlights: []string{result.Text},
+					}
+					searchResults = append(searchResults, sr)
+					matched = true
+					break
+				}
+			}
+		}
+
+		// If no match found, add as-is with the text from ClaraVector
+		if !matched {
+			doc := &models.Document{
+				Content:  result.Text,
+				Metadata: make(map[string]string),
+			}
+			sr := models.SearchResult{
+				Document:   doc,
+				Score:      1.0 - result.SimilarityScore,
+				MatchType:  "vector",
+				Highlights: []string{result.Text},
+			}
+			searchResults = append(searchResults, sr)
+		}
 	}
 
-	return enriched
+	return searchResults
+}
+
+func containsString(slice []string, target string) bool {
+	for _, s := range slice {
+		if s == target {
+			return true
+		}
+	}
+	return false
 }
 
 // ==========================================
@@ -252,7 +241,6 @@ func (s *RAGService) Ask(ctx context.Context, userID string, req *models.AskRequ
 		Query:        req.Question,
 		ContentTypes: req.ContentTypes,
 		Limit:        req.MaxContext,
-		VectorWeight: 0.7,
 	}
 
 	searchResp, err := s.Search(ctx, userID, searchReq)
@@ -296,6 +284,14 @@ func (s *RAGService) Ask(ctx context.Context, userID string, req *models.AskRequ
 			}
 			if summary, ok := result.Document.Metadata["summary"]; ok && summary != "" {
 				contextItem += "\n  Summary: " + summary
+			}
+
+		default:
+			// For unmatched results, use the content directly
+			if len(result.Highlights) > 0 {
+				contextItem = fmt.Sprintf("[Result %d] %s", i+1, result.Highlights[0])
+			} else {
+				contextItem = fmt.Sprintf("[Result %d] %s", i+1, result.Document.Content)
 			}
 		}
 		contextParts = append(contextParts, contextItem)
@@ -391,20 +387,39 @@ func (s *RAGService) IndexAllForUser(ctx context.Context, userID string) (*model
 
 	log.Printf("[RAG] Starting full index for user: %s", userID)
 
+	// Parse userID
+	userIDUint, err := strconv.ParseUint(userID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid user ID: %w", err)
+	}
+
+	// Ensure user and notebooks exist
+	todosNotebookID, err := s.claraClient.EnsureUserAndNotebook(uint(userIDUint), "todos")
+	if err != nil {
+		log.Printf("[RAG] Error ensuring todos notebook: %v", err)
+		return nil, err
+	}
+
+	memoriesNotebookID, err := s.claraClient.EnsureUserAndNotebook(uint(userIDUint), "memories")
+	if err != nil {
+		log.Printf("[RAG] Error ensuring memories notebook: %v", err)
+		return nil, err
+	}
+
 	// Index todos
 	todos, err := s.todoRepo.GetAllByUserID(userID)
 	if err != nil {
 		log.Printf("[RAG] Error fetching todos: %v", err)
 	} else {
 		for _, todo := range todos {
-			// Check if already indexed
-			if s.vectorRepo.GetByContentID(models.ContentTypeTodo, todo.ID) != nil {
-				skipped++
-				continue
+			content := todo.Title
+			if todo.Description != nil && *todo.Description != "" {
+				content += "\n" + *todo.Description
 			}
 
-			doc := s.todoToDocument(&todo)
-			if err := s.vectorRepo.Add(ctx, doc); err != nil {
+			filename := fmt.Sprintf("todo_%s", todo.ID)
+			_, err := s.claraClient.UploadDocument(todosNotebookID, filename, content)
+			if err != nil {
 				log.Printf("[RAG] Error indexing todo %s: %v", todo.ID, err)
 				errors++
 			} else {
@@ -419,14 +434,14 @@ func (s *RAGService) IndexAllForUser(ctx context.Context, userID string) (*model
 		log.Printf("[RAG] Error fetching memories: %v", err)
 	} else {
 		for _, memory := range memories {
-			// Check if already indexed
-			if s.vectorRepo.GetByContentID(models.ContentTypeMemory, memory.ID) != nil {
-				skipped++
-				continue
+			content := memory.Content
+			if memory.Summary != nil && *memory.Summary != "" {
+				content += "\nSummary: " + *memory.Summary
 			}
 
-			doc := s.memoryToDocument(&memory)
-			if err := s.vectorRepo.Add(ctx, doc); err != nil {
+			filename := fmt.Sprintf("memory_%s", memory.ID)
+			_, err := s.claraClient.UploadDocument(memoriesNotebookID, filename, content)
+			if err != nil {
 				log.Printf("[RAG] Error indexing memory %s: %v", memory.ID, err)
 				errors++
 			} else {
@@ -445,117 +460,98 @@ func (s *RAGService) IndexAllForUser(ctx context.Context, userID string) (*model
 	}, nil
 }
 
-// IndexTodo indexes a single todo
+// IndexTodo indexes a single todo (fire-and-forget)
 func (s *RAGService) IndexTodo(ctx context.Context, todo *models.Todo) error {
 	if !s.IsConfigured() {
 		return nil // Silently skip if not configured
 	}
 
-	// Delete existing if present
-	s.vectorRepo.DeleteByContentID(ctx, models.ContentTypeTodo, todo.ID)
+	// Parse userID
+	userIDUint, err := strconv.ParseUint(todo.UserID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid user ID: %w", err)
+	}
 
-	doc := s.todoToDocument(todo)
-	return s.vectorRepo.Add(ctx, doc)
+	// Fire-and-forget in goroutine
+	go func() {
+		notebookID, err := s.claraClient.EnsureUserAndNotebook(uint(userIDUint), "todos")
+		if err != nil {
+			log.Printf("[RAG] Error ensuring notebook for todo: %v", err)
+			return
+		}
+
+		content := todo.Title
+		if todo.Description != nil && *todo.Description != "" {
+			content += "\n" + *todo.Description
+		}
+
+		filename := fmt.Sprintf("todo_%s", todo.ID)
+		_, err = s.claraClient.UploadDocument(notebookID, filename, content)
+		if err != nil {
+			log.Printf("[RAG] Error indexing todo %s: %v", todo.ID, err)
+		} else {
+			log.Printf("[RAG] Indexed todo %s", todo.ID)
+		}
+	}()
+
+	return nil
 }
 
-// IndexMemory indexes a single memory
+// IndexMemory indexes a single memory (fire-and-forget)
 func (s *RAGService) IndexMemory(ctx context.Context, memory *models.Memory) error {
 	if !s.IsConfigured() {
 		return nil // Silently skip if not configured
 	}
 
-	// Delete existing if present
-	s.vectorRepo.DeleteByContentID(ctx, models.ContentTypeMemory, memory.ID)
+	// Parse userID
+	userIDUint, err := strconv.ParseUint(memory.UserID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid user ID: %w", err)
+	}
 
-	doc := s.memoryToDocument(memory)
-	return s.vectorRepo.Add(ctx, doc)
+	// Fire-and-forget in goroutine
+	go func() {
+		notebookID, err := s.claraClient.EnsureUserAndNotebook(uint(userIDUint), "memories")
+		if err != nil {
+			log.Printf("[RAG] Error ensuring notebook for memory: %v", err)
+			return
+		}
+
+		content := memory.Content
+		if memory.Summary != nil && *memory.Summary != "" {
+			content += "\nSummary: " + *memory.Summary
+		}
+
+		filename := fmt.Sprintf("memory_%s", memory.ID)
+		_, err = s.claraClient.UploadDocument(notebookID, filename, content)
+		if err != nil {
+			log.Printf("[RAG] Error indexing memory %s: %v", memory.ID, err)
+		} else {
+			log.Printf("[RAG] Indexed memory %s", memory.ID)
+		}
+	}()
+
+	return nil
 }
 
 // DeleteFromIndex removes a document from the index
+// Note: ClaraVector deletion requires document ID which we don't track
+// For now, this is a no-op. Future improvement: track ClaraVector doc IDs
 func (s *RAGService) DeleteFromIndex(ctx context.Context, contentType models.ContentType, contentID string) error {
 	if !s.IsConfigured() {
 		return nil
 	}
-	return s.vectorRepo.DeleteByContentID(ctx, contentType, contentID)
-}
-
-// ==========================================
-// Helpers
-// ==========================================
-
-func (s *RAGService) todoToDocument(todo *models.Todo) *models.Document {
-	content := todo.Title
-	if todo.Description != nil && *todo.Description != "" {
-		content += "\n" + *todo.Description
-	}
-
-	metadata := map[string]string{
-		"priority": string(todo.Priority),
-		"status":   string(todo.Status),
-	}
-
-	if todo.GroupID != nil {
-		metadata["group_id"] = *todo.GroupID
-	}
-
-	if len(todo.Tags) > 0 {
-		tagsJSON, _ := json.Marshal(todo.Tags)
-		metadata["tags"] = string(tagsJSON)
-	}
-
-	if todo.DueDate != nil {
-		metadata["due_date"] = *todo.DueDate
-	}
-
-	return &models.Document{
-		ContentType: models.ContentTypeTodo,
-		ContentID:   todo.ID,
-		UserID:      todo.UserID,
-		Title:       todo.Title,
-		Content:     content,
-		Metadata:    metadata,
-		CreatedAt:   todo.CreatedAt,
-	}
-}
-
-func (s *RAGService) memoryToDocument(memory *models.Memory) *models.Document {
-	title := ""
-	if memory.URLTitle != nil {
-		title = *memory.URLTitle
-	}
-
-	content := memory.Content
-	if memory.Summary != nil && *memory.Summary != "" {
-		content += "\nSummary: " + *memory.Summary
-	}
-
-	metadata := map[string]string{
-		"category": memory.Category,
-	}
-
-	if memory.URL != nil {
-		metadata["url"] = *memory.URL
-	}
-
-	return &models.Document{
-		ContentType: models.ContentTypeMemory,
-		ContentID:   memory.ID,
-		UserID:      memory.UserID,
-		Title:       title,
-		Content:     content,
-		Metadata:    metadata,
-		CreatedAt:   memory.CreatedAt,
-	}
+	// TODO: Implement deletion when we track ClaraVector document IDs
+	log.Printf("[RAG] DeleteFromIndex called for %s:%s (not implemented yet)", contentType, contentID)
+	return nil
 }
 
 // GetStats returns RAG index statistics
 func (s *RAGService) GetStats(userID string) *models.IndexStats {
-	if s.vectorRepo == nil {
-		return &models.IndexStats{
-			TotalDocuments: 0,
-			ByContentType:  make(map[string]int),
-			ByUser:         make(map[string]int),
-		}
+	// ClaraVector doesn't expose stats API easily, return basic info
+	return &models.IndexStats{
+		TotalDocuments: 0,
+		ByContentType:  make(map[string]int),
+		ByUser:         make(map[string]int),
 	}
-	return s.vectorRepo.GetStats(userID)
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
@@ -36,6 +36,7 @@ import type {
   MemoryCategory,
   MemoryDigest,
   MemoryStats,
+  UploadJobStatusResponse,
 } from '../types';
 import { formatDistanceToNow } from 'date-fns';
 import { useDebounce } from '../hooks/useDebounce';
@@ -82,6 +83,9 @@ export default function Memories() {
   const [urlPreviewMemory, setUrlPreviewMemory] = useState<Memory | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
+  const [uploadJobStatus, setUploadJobStatus] = useState<UploadJobStatusResponse | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMemoryCountRef = useRef<number>(0);
 
   // Debounce search query for server-side search
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
@@ -188,6 +192,82 @@ export default function Memories() {
     }
   };
 
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const pollJobStatus = async (jobId: string) => {
+    try {
+      const status = await memoryApi.getUploadJobStatus(jobId);
+      setUploadJobStatus(status);
+
+      // Only append NEW memories (not already in the list)
+      if (status.memories.length > lastMemoryCountRef.current) {
+        const newMemories = status.memories.slice(lastMemoryCountRef.current);
+        lastMemoryCountRef.current = status.memories.length;
+        
+        // Append new memories to the top
+        setMemories((prev) => [...newMemories, ...prev]);
+      }
+
+      // Update progress message
+      if (status.status === 'processing') {
+        setUploadProgress(
+          `Processing ${status.processed_items}/${status.total_items} (${status.progress}%)`
+        );
+      } else if (status.status === 'completed') {
+        setUploadProgress(`Completed! ${status.memories.length} memories created`);
+        
+        // Stop polling
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+
+        // Show success toast
+        toast.success(
+          `Successfully created ${status.memories.length} ${
+            status.memories.length === 1 ? 'memory' : 'memories'
+          }`
+        );
+
+        // Refresh stats
+        memoryApi.getStats().then(setStats).catch(() => {});
+
+        // Reset state after a brief delay
+        setTimeout(() => {
+          setIsUploading(false);
+          setUploadProgress('');
+          setUploadJobStatus(null);
+          lastMemoryCountRef.current = 0;
+        }, 2000);
+      } else if (status.status === 'failed') {
+        setUploadProgress(`Failed: ${status.error_message || 'Unknown error'}`);
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+        toast.error(status.error_message || 'Upload failed');
+        setIsUploading(false);
+        lastMemoryCountRef.current = 0;
+      }
+    } catch (error) {
+      console.error('Failed to poll job status:', error);
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      setIsUploading(false);
+      toast.error('Failed to check upload status');
+      lastMemoryCountRef.current = 0;
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -212,31 +292,30 @@ export default function Memories() {
 
     setIsUploading(true);
     setUploadProgress(`Uploading ${file.name}...`);
+    lastMemoryCountRef.current = 0;
 
     try {
-      const result = await memoryApi.uploadFile(file);
+      // Start the upload job
+      const result = await memoryApi.startUploadJob(file);
+      
+      setUploadProgress(`Processing file...`);
+      
+      // Start polling for job status (every 1 second)
+      pollingIntervalRef.current = setInterval(() => {
+        pollJobStatus(result.job_id);
+      }, 1000);
 
-      // Add newly created memories to state (at top of list)
-      setMemories((prev) => [...result.memories, ...prev]);
-
-      // Show success message
-      toast.success(
-        `Successfully created ${result.total_created} ${
-          result.total_created === 1 ? 'memory' : 'memories'
-        } from ${result.filename}`
-      );
-
-      // Refresh stats in background
-      memoryApi.getStats().then(setStats).catch(() => {});
+      // Also poll immediately
+      pollJobStatus(result.job_id);
 
       // Clear file input
       e.target.value = '';
     } catch (error: any) {
       const errorMsg = error.response?.data?.error || 'Failed to upload file';
       toast.error(errorMsg);
-    } finally {
       setIsUploading(false);
       setUploadProgress('');
+      lastMemoryCountRef.current = 0;
     }
   };
 
@@ -933,12 +1012,22 @@ export default function Memories() {
             {/* Upload progress bar */}
             {isUploading && uploadProgress && (
               <div className="px-3 pb-3">
-                <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mb-1">
+                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
                   <span>{uploadProgress}</span>
+                  {uploadJobStatus && uploadJobStatus.status !== 'failed' && (
+                    <span className="font-medium">{uploadJobStatus.progress}%</span>
+                  )}
                 </div>
-                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1">
-                  <div className="bg-primary-600 h-1 rounded-full animate-pulse" style={{ width: '60%' }} />
-                </div>
+                {uploadJobStatus && uploadJobStatus.status !== 'failed' && (
+                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1">
+                    <div
+                      className={`h-1 rounded-full transition-all duration-300 ${
+                        uploadJobStatus.status === 'completed' ? 'bg-green-600' : 'bg-primary-600'
+                      }`}
+                      style={{ width: `${uploadJobStatus.progress}%` }}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </form>

@@ -380,6 +380,7 @@ func (s *FileParserService) splitTextIntoChunks(text string, maxSize int) []stri
 }
 
 // parseJSONFile parses JSON and converts to readable text
+// Special handling for Google Keep exports and other structured formats
 func (s *FileParserService) parseJSONFile(filename string, content []byte) ([]ParsedMemorySection, error) {
 	var data interface{}
 	if err := json.Unmarshal(content, &data); err != nil {
@@ -389,7 +390,12 @@ func (s *FileParserService) parseJSONFile(filename string, content []byte) ([]Pa
 		}
 	}
 
-	// Convert JSON to readable text
+	// Check if this is a Google Keep export or similar structured format
+	if sections := s.tryParseStructuredJSON(data, filename); len(sections) > 0 {
+		return sections, nil
+	}
+
+	// Fall back to generic JSON-to-text conversion
 	text := s.jsonToText(data, "")
 	text = strings.TrimSpace(text)
 
@@ -407,6 +413,112 @@ func (s *FileParserService) parseJSONFile(filename string, content []byte) ([]Pa
 			Order:   0,
 		},
 	}, nil
+}
+
+// tryParseStructuredJSON attempts to parse known structured JSON formats
+// Returns empty slice if format is not recognized
+func (s *FileParserService) tryParseStructuredJSON(data interface{}, filename string) []ParsedMemorySection {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	// Check for Google Keep export format: has "notes" array and optional "exportInfo"
+	notesData, hasNotes := dataMap["notes"]
+	if hasNotes {
+		if notesArray, ok := notesData.([]interface{}); ok {
+			// Check if there's exportInfo indicating this is a Google Keep export
+			exportInfo, hasExportInfo := dataMap["exportInfo"]
+			isGoogleKeep := false
+			if hasExportInfo {
+				if exportMap, ok := exportInfo.(map[string]interface{}); ok {
+					if source, ok := exportMap["source"].(string); ok && strings.Contains(strings.ToLower(source), "google keep") {
+						isGoogleKeep = true
+					}
+				}
+			}
+
+			// Parse notes array
+			sections := s.parseNotesArray(notesArray, isGoogleKeep)
+			if len(sections) > 0 {
+				return sections
+			}
+		}
+	}
+
+	return nil
+}
+
+// parseNotesArray parses an array of note objects into memory sections
+func (s *FileParserService) parseNotesArray(notesArray []interface{}, isGoogleKeep bool) []ParsedMemorySection {
+	var sections []ParsedMemorySection
+
+	for i, noteItem := range notesArray {
+		noteMap, ok := noteItem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Extract note content
+		var content strings.Builder
+		var title string
+
+		// Get title
+		if t, ok := noteMap["title"].(string); ok && t != "" {
+			title = t
+			content.WriteString(fmt.Sprintf("# %s\n\n", t))
+		}
+
+		// Get text content
+		if textContent, ok := noteMap["textContent"].(string); ok && textContent != "" {
+			content.WriteString(textContent)
+			content.WriteString("\n")
+		}
+
+		// Get labels/tags if present
+		if labelsData, ok := noteMap["labels"]; ok {
+			if labelsArray, ok := labelsData.([]interface{}); ok && len(labelsArray) > 0 {
+				content.WriteString("\nTags: ")
+				var tags []string
+				for _, labelItem := range labelsArray {
+					if labelMap, ok := labelItem.(map[string]interface{}); ok {
+						if name, ok := labelMap["name"].(string); ok {
+							tags = append(tags, name)
+						}
+					}
+				}
+				content.WriteString(strings.Join(tags, ", "))
+				content.WriteString("\n")
+			}
+		}
+
+		// Add metadata (only if significant)
+		if isPinned, ok := noteMap["isPinned"].(bool); ok && isPinned {
+			content.WriteString("\n📌 Pinned")
+		}
+
+		finalContent := strings.TrimSpace(content.String())
+		if finalContent == "" {
+			continue // Skip empty notes
+		}
+
+		// Create heading for the section
+		heading := title
+		if heading == "" {
+			heading = fmt.Sprintf("Note %d", i+1)
+		}
+		if isGoogleKeep {
+			heading = fmt.Sprintf("%s (Google Keep)", heading)
+		}
+
+		sections = append(sections, ParsedMemorySection{
+			Content: finalContent,
+			Heading: heading,
+			Order:   i,
+		})
+	}
+
+	return sections
 }
 
 // jsonToText recursively converts JSON to readable text

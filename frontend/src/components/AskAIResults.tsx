@@ -453,7 +453,7 @@ export default function AskAIResults({
   }, [showModeDropup]);
 
   return (
-    <div className="p-6">
+    <div className="p-3 sm:p-6">
       <div className="max-w-3xl mx-auto">
         {/* Controls Row - Minimize in center, Clear all on right */}
         <AnimatePresence>
@@ -696,7 +696,7 @@ export default function AskAIResults({
           </AnimatePresence>
 
           {/* Input Row */}
-          <div className="p-5 relative z-[100]">
+          <div className="p-3 sm:p-5 relative z-[100]">
             <form onSubmit={onSubmit}>
               <div className="flex items-center gap-3">
                 {/* Mode Switcher Button */}

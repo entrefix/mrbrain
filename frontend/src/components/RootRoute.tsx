@@ -21,16 +21,16 @@ export default function RootRoute() {
 
   if (user) {
     return (
-      <div className={`min-h-screen bg-background-light dark:bg-background-dark ${isUnifiedPage ? '' : 'p-3 lg:p-4'}`}>
-        <div className={`flex ${isUnifiedPage ? 'h-screen' : 'h-[calc(100vh-24px)] lg:h-[calc(100vh-32px)]'} ${isUnifiedPage ? '' : 'gap-3 lg:gap-4'}`}>
+      <div className={`h-full bg-background-light dark:bg-background-dark ${isUnifiedPage ? '' : 'p-3 lg:p-4'}`}>
+        <div className={`flex h-full ${isUnifiedPage ? '' : 'gap-3 lg:gap-4'}`}>
           {/* Sidebar - Hidden on unified page */}
           {!isUnifiedPage && (
             <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
           )}
 
           {/* Main content */}
-          <main className={`${isUnifiedPage ? 'w-full' : 'flex-1'} ${isUnifiedPage ? '' : 'bg-surface-light dark:bg-surface-dark rounded-2xl shadow-subtle border border-gray-200/50 dark:border-gray-800/50'} overflow-hidden relative`}>
-            <div className="h-full overflow-y-auto">
+          <main className={`${isUnifiedPage ? 'w-full h-full' : 'flex-1'} ${isUnifiedPage ? '' : 'bg-surface-light dark:bg-surface-dark rounded-2xl shadow-subtle border border-gray-200/50 dark:border-gray-800/50'} overflow-hidden relative`}>
+            <div className="h-full overflow-hidden">
               {!isUnifiedPage && <div className="lg:hidden h-14" />}
               <Unified />
             </div>

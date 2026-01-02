@@ -871,7 +871,7 @@ export default function Unified() {
           </div>
         ) : (
           /* Grid Area - with subtle top padding so initial elements aren't hidden, but can scroll under header */
-          <div className="flex-1 overflow-y-auto pt-6 pb-32">
+          <div className="flex-1 overflow-y-auto pt-6 pb-40 sm:pb-32">
             {loading ? (
               <div className="flex items-center justify-center h-64">
                 <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-600"></div>

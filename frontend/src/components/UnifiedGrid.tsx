@@ -17,7 +17,7 @@ export default function UnifiedGrid({ items, type, onCreateClick, onImportClick,
   const isCompleted = uploadStatus?.status === 'completed';
   const isFailed = uploadStatus?.status === 'failed';
   return (
-    <div className="px-12 sm:px-16 lg:px-24 xl:px-32 2xl:px-40">
+    <div className="px-6 sm:px-16 lg:px-24 xl:px-32 2xl:px-40">
       <div className="columns-2 sm:columns-2 lg:columns-3 xl:columns-4 2xl:columns-5 gap-4">
         {/* Create Card - Always first */}
         <motion.div

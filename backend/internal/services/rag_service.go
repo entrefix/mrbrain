@@ -279,24 +279,57 @@ func (s *RAGService) Ask(ctx context.Context, userID string, req *models.AskRequ
 		sources = webSources
 
 	case models.AskModeHybrid:
-		// Combine memories + internet
+		// Enhanced 4-step hybrid pipeline:
+		// Step 1: Get memories context
+		// Step 2: LLM generates smart search queries
+		// Step 3: Web search with generated queries
+		// Step 4: Final synthesis with all context
+
+		// Step 1: Get memories context
 		memCtx, memSources := s.getMemoriesContext(ctx, userID, req)
-		webCtx, webSources, err := s.getInternetContext(ctx, req.Question)
+		log.Printf("[RAG Hybrid] Step 1: Got %d memory sources", len(memSources))
+
+		// Step 2: Generate smart search queries using LLM
+		searchQueries, err := s.generateSearchQueries(ctx, userID, req.Question, memCtx)
 		if err != nil {
-			log.Printf("[RAG] Internet search error (hybrid mode): %v", err)
-			// Continue with memories only
-			contextStr = memCtx
-			sources = memSources
+			log.Printf("[RAG Hybrid] Step 2: Query generation failed: %v, using original question", err)
+			searchQueries = []string{req.Question}
 		} else {
-			if memCtx != "" && webCtx != "" {
-				contextStr = memCtx + "\n\n--- Web Results ---\n\n" + webCtx
-			} else if memCtx != "" {
-				contextStr = memCtx
-			} else {
-				contextStr = webCtx
-			}
-			sources = append(memSources, webSources...)
+			log.Printf("[RAG Hybrid] Step 2: Generated queries: %v", searchQueries)
 		}
+
+		// Step 3: Web search with each generated query (max 3)
+		var allWebCtx strings.Builder
+		var webSources []models.SearchResult
+
+		for i, query := range searchQueries {
+			if i >= 3 {
+				break // Limit to 3 queries
+			}
+
+			webCtx, webSrcs, err := s.getInternetContext(ctx, query)
+			if err != nil {
+				log.Printf("[RAG Hybrid] Step 3: Web search failed for query '%s': %v", query, err)
+				continue
+			}
+
+			if webCtx != "" {
+				allWebCtx.WriteString(fmt.Sprintf("\n--- Search: %s ---\n%s\n", query, webCtx))
+				webSources = append(webSources, webSrcs...)
+			}
+		}
+		log.Printf("[RAG Hybrid] Step 3: Got %d web sources from %d queries", len(webSources), len(searchQueries))
+
+		// Step 4: Build combined context
+		if memCtx != "" && allWebCtx.Len() > 0 {
+			contextStr = fmt.Sprintf("YOUR PERSONAL DATA:\n%s\n\nWEB RESEARCH:\n%s", memCtx, allWebCtx.String())
+		} else if memCtx != "" {
+			contextStr = memCtx
+		} else {
+			contextStr = allWebCtx.String()
+		}
+
+		sources = append(memSources, webSources...)
 
 	case models.AskModeLLM:
 		// Direct LLM only - no context retrieval
@@ -492,6 +525,54 @@ func (s *RAGService) getInternetContext(ctx context.Context, question string) (s
 	return strings.Join(contextParts, "\n\n"), sources, nil
 }
 
+// generateSearchQueries uses LLM to create optimized web search queries based on question and context
+func (s *RAGService) generateSearchQueries(ctx context.Context, userID, question, memoriesContext string) ([]string, error) {
+	var prompt string
+
+	if memoriesContext != "" {
+		prompt = fmt.Sprintf(`Based on this question and the user's personal notes, generate 2-3 focused web search queries.
+
+QUESTION: %s
+
+USER'S NOTES:
+%s
+
+Generate queries that would help validate or expand on specific points from their notes.
+Return ONLY a JSON array of strings, no other text: ["query1", "query2"]`, question, memoriesContext)
+	} else {
+		prompt = fmt.Sprintf(`Convert this question into 2-3 focused web search queries.
+
+QUESTION: %s
+
+Break it down into specific, searchable topics.
+Return ONLY a JSON array of strings, no other text: ["query1", "query2"]`, question)
+	}
+
+	response, err := s.callAIProvider(ctx, userID, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse JSON array
+	var queries []string
+	// Try to extract JSON from the response (LLM might add extra text)
+	response = strings.TrimSpace(response)
+	// Find the JSON array in the response
+	startIdx := strings.Index(response, "[")
+	endIdx := strings.LastIndex(response, "]")
+	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+		jsonStr := response[startIdx : endIdx+1]
+		if err := json.Unmarshal([]byte(jsonStr), &queries); err == nil && len(queries) > 0 {
+			log.Printf("[RAG] Generated search queries: %v", queries)
+			return queries, nil
+		}
+	}
+
+	// Fallback: return original question if JSON parsing fails
+	log.Printf("[RAG] Failed to parse search queries, using original question")
+	return []string{question}, nil
+}
+
 // generateDirectAnswer generates an answer directly from LLM without context
 func (s *RAGService) generateDirectAnswer(ctx context.Context, userID, question string) (string, error) {
 	prompt := fmt.Sprintf(`You are a helpful assistant. Please answer the following question directly and helpfully.
@@ -555,7 +636,7 @@ ANSWER:`, contextStr, question)
 func (s *RAGService) generateHybridAnswer(ctx context.Context, userID, question, contextStr string, hasMemories, hasWeb bool) (string, error) {
 	var sourceDescription string
 	if hasMemories && hasWeb {
-		sourceDescription = "your personal memories/todos AND web search results"
+		sourceDescription = "your personal memories/todos AND targeted web research"
 	} else if hasMemories {
 		sourceDescription = "your personal memories/todos"
 	} else {
@@ -564,9 +645,11 @@ func (s *RAGService) generateHybridAnswer(ctx context.Context, userID, question,
 
 	prompt := fmt.Sprintf(`You are a helpful assistant answering questions using %s.
 
-The context below contains two types of information:
-1. PERSONAL DATA: The user's own memories, notes, and todos (marked with [Memory] or [Todo])
-2. WEB RESULTS: Information from web searches (marked with [Web])
+The context contains:
+1. YOUR PERSONAL DATA: The user's own memories, notes, and todos
+2. WEB RESEARCH: Targeted web searches generated based on the user's question and personal context
+
+The web searches were specifically crafted to validate, expand on, or provide research relevant to the user's personal notes.
 
 CONTEXT:
 %s
@@ -574,13 +657,13 @@ CONTEXT:
 QUESTION: %s
 
 INSTRUCTIONS:
-- Combine insights from both personal data and web results to give a comprehensive answer
-- Clearly distinguish between what the user has noted/planned personally vs what external sources say
-- For example: "Based on your notes, you planned to study X. According to [web source], a good approach would be Y..."
-- If the user has personal data relevant to the question, prioritize that and supplement with web info
-- If only web results are relevant, provide the web-based answer
-- Be conversational and helpful, making connections between personal context and external information
-- Format your response clearly, perhaps separating "From your data" and "From the web" sections if both are substantial
+- Start by acknowledging what you found in their personal data (if any)
+- Then provide relevant insights from web research that validate or expand on their ideas
+- Make specific connections: "Your note about X aligns with research showing..." or "Regarding your plan for Y, studies suggest..."
+- If personal data is relevant, prioritize it and use web findings as supporting evidence
+- If their notes contain ideas or plans, help validate them with external research
+- Be conversational, specific, and helpful
+- Don't just summarize - synthesize the personal context with web research into actionable insights
 
 ANSWER:`, sourceDescription, contextStr, question)
 

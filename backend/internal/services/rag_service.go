@@ -111,6 +111,30 @@ func (s *RAGService) Search(ctx context.Context, userID string, req *models.Sear
 		log.Printf("[RAG] Keyword search error: %v", ftsErr)
 	}
 
+	// Filter vector results by cosine similarity BEFORE RRF
+	// This filters out semantically unrelated documents
+	if len(vectorResults) > 1 {
+		topSim := vectorResults[0].Score // Cosine similarity (0-1)
+		minSimThreshold := topSim * 0.85 // Keep results within 85% of top similarity
+
+		var filteredVec []models.SearchResult
+		for i, r := range vectorResults {
+			// Also check for score gaps (>20% drop from previous)
+			if i > 0 && r.Score < vectorResults[i-1].Score*0.8 {
+				break
+			}
+			if r.Score >= minSimThreshold {
+				filteredVec = append(filteredVec, r)
+			} else {
+				break
+			}
+		}
+
+		log.Printf("[RAG] Vector filter: %d→%d results (top_sim=%.4f, threshold=%.4f)",
+			len(vectorResults), len(filteredVec), topSim, minSimThreshold)
+		vectorResults = filteredVec
+	}
+
 	// Combine results using Reciprocal Rank Fusion
 	combined := s.reciprocalRankFusion(vectorResults, keywordResults, req.VectorWeight)
 
@@ -131,18 +155,23 @@ func (s *RAGService) Search(ctx context.Context, userID string, req *models.Sear
 }
 
 // reciprocalRankFusion combines results from multiple search methods
+// Uses RRF for ranking but preserves original vector similarity scores for filtering
 func (s *RAGService) reciprocalRankFusion(vectorResults, keywordResults []models.SearchResult, vectorWeight float64) []models.SearchResult {
 	const k = 60.0 // RRF constant
 
 	// Map to track combined scores by content_id
 	scoreMap := make(map[string]float64)
 	docMap := make(map[string]*models.SearchResult)
+	// Preserve original vector similarity for filtering (0-1 cosine similarity)
+	vectorSimMap := make(map[string]float64)
 
 	// Add vector results
 	for i, result := range vectorResults {
 		key := fmt.Sprintf("%s-%s", result.Document.ContentType, result.Document.ContentID)
 		rrf := vectorWeight * (1.0 / (k + float64(i+1)))
 		scoreMap[key] += rrf
+		// Store original cosine similarity for later filtering
+		vectorSimMap[key] = result.Score
 		if _, exists := docMap[key]; !exists {
 			r := result
 			r.MatchType = "vector"

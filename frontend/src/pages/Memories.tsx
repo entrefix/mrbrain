@@ -300,10 +300,10 @@ export default function Memories() {
       
       setUploadProgress(`Processing file...`);
       
-      // Start polling for job status (every 1 second)
+      // Start polling for job status (every 2 seconds)
       pollingIntervalRef.current = setInterval(() => {
         pollJobStatus(result.job_id);
-      }, 1000);
+      }, 2000);
 
       // Also poll immediately
       pollJobStatus(result.job_id);
@@ -974,7 +974,7 @@ export default function Memories() {
               </div>
 
               {/* File Upload Button */}
-              <label className="flex-shrink-0 cursor-pointer group relative">
+              <label className={`flex-shrink-0 group relative ${isUploading ? '' : 'cursor-pointer'}`}>
                 <input
                   type="file"
                   accept=".txt,.md,.pdf,.json"
@@ -982,21 +982,30 @@ export default function Memories() {
                   disabled={isUploading}
                   className="hidden"
                 />
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors ${
                   isUploading 
                     ? 'bg-primary-100 dark:bg-primary-900/30' 
                     : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                 }`}>
                   {isUploading ? (
-                    <div className="w-4 h-4 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+                      {uploadJobStatus && (
+                        <span className="text-xs font-medium text-primary-600 dark:text-primary-400">
+                          {uploadJobStatus.progress}%
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <Paperclip size={18} weight="regular" className="text-gray-400 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors" />
                   )}
                 </div>
                 {/* Tooltip */}
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  Upload file (.txt, .md, .pdf, .json)
-                </div>
+                {!isUploading && (
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                    Upload file (.txt, .md, .pdf, .json)
+                  </div>
+                )}
               </label>
 
               {/* Submit button */}

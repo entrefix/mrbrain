@@ -84,7 +84,7 @@ export default function ImportModal({ isOpen, onClose, onImportComplete }: Impor
       lastMemoryCountRef.current = 0;
       pollingIntervalRef.current = setInterval(() => {
         pollJobStatus(result.job_id);
-      }, 1000); // Poll every second
+      }, 2000); // Poll every 2 seconds
 
       // Also poll immediately
       pollJobStatus(result.job_id);

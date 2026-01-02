@@ -1,8 +1,8 @@
 # RAG & Memories System Documentation
 
-**Document Version**: 2.0  
-**Last Updated**: 2025-12-31  
-**Status**: Reference Documentation  
+**Document Version**: 3.0
+**Last Updated**: 2026-01-02
+**Status**: Reference Documentation
 **Embedding Provider**: NVIDIA NIM (nv-embedqa-e5-v5)
 
 ---
@@ -13,6 +13,10 @@
 2. [System Architecture](#system-architecture)
 3. [Memories System](#memories-system)
 4. [RAG (Retrieval-Augmented Generation)](#rag-retrieval-augmented-generation)
+   - [Hybrid Search Architecture](#hybrid-search-architecture)
+   - [Relevance Filtering](#relevance-filtering)
+   - [Multi-Mode Ask AI](#multi-mode-ask-ai)
+   - [Enhanced Hybrid Pipeline](#enhanced-hybrid-pipeline)
 5. [Vector Storage](#vector-storage)
 6. [Full-Text Search](#full-text-search)
 7. [AI Provider Integration](#ai-provider-integration)
@@ -36,7 +40,9 @@ The RAG & Memories system provides intelligent knowledge management capabilities
 
 | Feature | Description |
 |---------|-------------|
-| Hybrid Search | Combines vector similarity + keyword matching for best results |
+| Hybrid Search | Combines vector similarity + keyword matching with relevance filtering |
+| Multi-Mode Ask | Four modes: memories-only, internet-only, hybrid (both), direct LLM |
+| Relevance Filtering | Cosine similarity threshold to eliminate irrelevant results |
 | AI Categorization | Automatic classification into 11 categories |
 | URL Processing | Scrapes and summarizes web pages mentioned in memories |
 | File Upload | Import memories from .txt, .md, .pdf, and .json files |
@@ -312,28 +318,33 @@ func (s *MemoryService) GetOrGenerateDigest(userID string, forceRegenerate bool)
 
 ### Hybrid Search Architecture
 
-The RAG system combines two search methods for optimal results:
+The RAG system combines two search methods for optimal results, with **relevance filtering** applied before merging:
 
 ```mermaid
 flowchart LR
     Query[User Query] --> Parallel{Parallel Search}
-    
+
     Parallel --> Vector[Vector Search]
     Parallel --> Keyword[Keyword Search]
-    
+
     Vector --> VectorDB[(chromem-go)]
     Keyword --> FTS5[(SQLite FTS5)]
-    
-    VectorDB --> VectorResults[Vector Results]
+
+    VectorDB --> VectorResults[Vector Results<br/>with Cosine Similarity]
     FTS5 --> KeywordResults[Keyword Results]
-    
-    VectorResults --> RRF[Reciprocal Rank Fusion]
+
+    VectorResults --> Filter[Relevance Filter<br/>85% threshold + gap detection]
+    Filter --> FilteredVec[Filtered Vector Results]
+
+    FilteredVec --> RRF[Reciprocal Rank Fusion]
     KeywordResults --> RRF
-    
+
     RRF --> Merged[Merged Results]
     Merged --> Enrich[Enrich with Full Data]
     Enrich --> Response[Search Response]
 ```
+
+**Key Insight:** Relevance filtering happens on raw cosine similarity scores **before** RRF merging, not after. This is crucial because RRF scores are positional and cluster tightly (all within ~6% of each other), making them unsuitable for quality filtering.
 
 ### Search Request
 
@@ -385,6 +396,277 @@ Where:
 - `weight` = 0.7 for vector, 0.3 for keyword (configurable)
 - `k` = 60 (constant)
 - `rank` = position in result list (1-based)
+
+### Relevance Filtering
+
+#### The Problem
+
+Without relevance filtering, the system returns top-N results regardless of quality. For example, searching "which place has good coffee?" might return 5 sources when only 1 document actually mentions coffee. The other 4 are marginally related (e.g., mentions of places, food in general).
+
+**Why RRF scores don't work for filtering:**
+- RRF uses positional ranking, not absolute relevance
+- All RRF scores cluster tightly (within 6% of each other)
+- A 30% threshold passes everything because all scores are similar
+
+#### The Solution: Filter on Cosine Similarity BEFORE RRF
+
+Vector search returns **cosine similarity scores** (0 to 1) which are much more discriminative:
+- Highly relevant: 0.85+
+- Somewhat relevant: 0.70-0.85
+- Marginally relevant: 0.50-0.70
+- Not relevant: <0.50
+
+**Filtering Algorithm (Pseudo-code):**
+
+```
+FUNCTION filterByRelevance(vectorResults):
+    IF vectorResults is empty:
+        RETURN vectorResults
+
+    topSimilarity = vectorResults[0].score  // Highest cosine similarity
+    threshold = topSimilarity * 0.85        // Keep within 85% of top score
+
+    filtered = []
+    FOR i, result IN vectorResults:
+        // Check for score gaps (>20% drop from previous)
+        IF i > 0 AND result.score < vectorResults[i-1].score * 0.8:
+            BREAK  // Large gap indicates quality cliff
+
+        IF result.score >= threshold:
+            filtered.APPEND(result)
+        ELSE:
+            BREAK  // Below threshold, stop
+
+    RETURN filtered
+```
+
+**Why this works:**
+
+| Search Query | Before Filtering | After Filtering |
+|--------------|------------------|-----------------|
+| "good coffee" | 5 results (1 relevant + 4 noise) | 1-2 results (only relevant) |
+| "plans for next month" | 5 results | 2-3 results (captures both related docs) |
+
+**Benefits:**
+1. Less noise sent to LLM → better answer quality
+2. Fewer tokens → faster responses
+3. Lower API costs
+4. More focused context
+
+#### Score Comparison: Cosine vs RRF
+
+| Result | Cosine Similarity | RRF Score |
+|--------|-------------------|-----------|
+| Doc 1 (highly relevant) | 0.847 | 0.0162 |
+| Doc 2 (somewhat relevant) | 0.712 | 0.0159 |
+| Doc 3 (marginally relevant) | 0.543 | 0.0156 |
+| Doc 4 (not relevant) | 0.421 | 0.0153 |
+| Doc 5 (not relevant) | 0.398 | 0.0150 |
+
+Notice: RRF scores differ by only 8% total, while cosine similarity shows 53% spread. Filtering at 85% of top cosine (0.72) correctly excludes docs 3-5.
+
+### Multi-Mode Ask AI
+
+The Ask endpoint supports four distinct modes for different use cases:
+
+```mermaid
+flowchart TB
+    Question[User Question] --> ModeSelect{Mode Selection}
+
+    ModeSelect -->|memories| MemMode[Memories Mode]
+    ModeSelect -->|internet| NetMode[Internet Mode]
+    ModeSelect -->|hybrid| HybridMode[Hybrid Mode]
+    ModeSelect -->|llm| LLMMode[Direct LLM Mode]
+
+    MemMode --> MemSearch[Search Personal Data<br/>Todos + Memories]
+    MemSearch --> MemLLM[LLM Answer<br/>with personal context]
+
+    NetMode --> WebSearch[Web Search via SearXNG]
+    WebSearch --> Scrape[Scrape Top Results]
+    Scrape --> NetLLM[LLM Answer<br/>with web context]
+
+    HybridMode --> HybridPipeline[Enhanced Hybrid Pipeline<br/>See below]
+
+    LLMMode --> DirectLLM[Direct LLM Answer<br/>No retrieval]
+
+    MemLLM --> Answer[Answer + Sources]
+    NetLLM --> Answer
+    HybridPipeline --> Answer
+    DirectLLM --> Answer
+```
+
+#### Mode Descriptions
+
+| Mode | Data Source | Use Case |
+|------|-------------|----------|
+| `memories` | Personal data only (todos + memories) | "What did I note about project X?" |
+| `internet` | Web search only | "What's the latest news on topic Y?" |
+| `hybrid` | Personal data + web research | "Validate my idea about fitness" |
+| `llm` | No retrieval, direct LLM | General knowledge questions |
+
+#### Mode-Specific Behavior
+
+**Memories Mode:**
+```
+Question → Search (todos + memories) → Build context → LLM → Answer
+```
+- Uses hybrid vector + keyword search on personal data
+- Relevance filtering ensures quality context
+- Answer cites specific memories/todos as sources
+
+**Internet Mode:**
+```
+Question → Web Search → Scrape top URLs → Build context → LLM → Answer
+```
+- Queries SearXNG for relevant web pages
+- Scrapes and extracts content from top results
+- Answer includes web URLs as sources
+
+**Hybrid Mode (Enhanced):**
+```
+Question → Memories Search → LLM Query Generation → Smart Web Search → LLM Synthesis → Answer
+```
+- See [Enhanced Hybrid Pipeline](#enhanced-hybrid-pipeline) section below
+- Best for validating personal ideas with external research
+
+**Direct LLM Mode:**
+```
+Question → LLM → Answer
+```
+- No retrieval step
+- Uses LLM's trained knowledge
+- No sources cited
+
+### Enhanced Hybrid Pipeline
+
+The hybrid mode uses a sophisticated 4-step pipeline to intelligently combine personal data with web research:
+
+```mermaid
+flowchart TB
+    subgraph Step1 [Step 1: Personal Context]
+        Q[User Question] --> MemSearch[Search Memories & Todos]
+        MemSearch --> PersonalData[Personal Context]
+    end
+
+    subgraph Step2 [Step 2: Smart Query Generation]
+        PersonalData --> QueryLLM[LLM Analysis]
+        Q --> QueryLLM
+        QueryLLM --> Queries[Generated Search Queries<br/>2-3 specific queries]
+    end
+
+    subgraph Step3 [Step 3: Targeted Web Search]
+        Queries --> WebSearch1[Search Query 1]
+        Queries --> WebSearch2[Search Query 2]
+        Queries --> WebSearch3[Search Query 3]
+        WebSearch1 --> WebResults[Combined Web Results]
+        WebSearch2 --> WebResults
+        WebSearch3 --> WebResults
+    end
+
+    subgraph Step4 [Step 4: Synthesis]
+        PersonalData --> FinalLLM[LLM Synthesis]
+        WebResults --> FinalLLM
+        Q --> FinalLLM
+        FinalLLM --> Answer[Final Answer<br/>with sources]
+    end
+```
+
+#### Why Enhanced Hybrid is Better
+
+**Problem with simple concatenation:**
+
+User asks: "Think about my idea about fitness and validate it"
+
+Simple approach:
+1. Search memories for "think about my idea about fitness and validate it" → finds fitness notes
+2. Search web for "think about my idea about fitness and validate it" → poor results (bad query)
+3. Concatenate and answer → generic response
+
+**Enhanced approach:**
+
+1. Search memories → finds "User wants to do HIIT 3x/week + intermittent fasting"
+2. LLM analyzes context → generates queries:
+   - "HIIT 3 times per week effectiveness"
+   - "intermittent fasting with HIIT training"
+3. Web search with smart queries → finds relevant research
+4. LLM synthesizes → "Based on your plan to do HIIT 3x/week with IF, here's what research says..."
+
+#### Query Generation (Pseudo-code)
+
+```
+FUNCTION generateSearchQueries(question, memoriesContext):
+    IF memoriesContext is not empty:
+        prompt = "Based on this question and user's personal notes,
+                  generate 2-3 specific web search queries.
+
+                  QUESTION: {question}
+                  USER'S NOTES: {memoriesContext}
+
+                  Focus on:
+                  - Specific topics from their notes
+                  - Claims that need validation
+                  - Related research
+
+                  Return JSON array: [\"query1\", \"query2\"]"
+    ELSE:
+        prompt = "Convert this question into 2-3 focused search queries.
+                  QUESTION: {question}
+                  Return JSON array: [\"query1\", \"query2\"]"
+
+    response = callLLM(prompt)
+    queries = parseJSONArray(response)
+
+    IF queries is empty:
+        RETURN [question]  // Fallback to original
+
+    RETURN queries
+```
+
+#### Enhanced Hybrid Flow (Pseudo-code)
+
+```
+FUNCTION askHybrid(userID, question):
+    // Step 1: Get personal context
+    memoryContext, memorySources = searchMemories(userID, question)
+
+    // Step 2: Generate smart search queries
+    searchQueries = generateSearchQueries(question, memoryContext)
+    // e.g., ["HIIT effectiveness studies", "intermittent fasting workout"]
+
+    // Step 3: Web search with each generated query
+    webContext = ""
+    webSources = []
+    FOR query IN searchQueries (max 3):
+        results = webSearch(query)
+        webContext += "Search: {query}\n{results}\n"
+        webSources.APPEND(results)
+
+    // Step 4: Build combined context and synthesize
+    IF memoryContext is not empty:
+        context = "YOUR PERSONAL DATA:\n{memoryContext}\n\n
+                   WEB RESEARCH:\n{webContext}"
+    ELSE:
+        context = webContext
+
+    answer = generateHybridAnswer(question, context)
+
+    RETURN {
+        answer: answer,
+        sources: memorySources + webSources
+    }
+```
+
+#### Trade-offs
+
+| Aspect | Simple Hybrid | Enhanced Hybrid |
+|--------|--------------|-----------------|
+| LLM Calls | 1 | 2 (query gen + answer) |
+| Latency | ~2-3s | ~4-5s |
+| Quality | Generic | Contextual |
+| Web Relevance | Often poor | Targeted |
+| Cost | Lower | Higher (2x LLM calls) |
+
+The extra latency and cost are worthwhile when the user's question requires external validation of personal ideas or plans.
 
 ### Q&A (Ask) Flow
 
@@ -1064,9 +1346,18 @@ Content-Type: application/json
 {
   "question": "What are my pending tasks related to the website?",
   "content_types": ["todo"],
-  "max_context": 5
+  "max_context": 5,
+  "mode": "memories"
 }
 ```
+
+**Mode Options:**
+| Mode | Description |
+|------|-------------|
+| `memories` | Search personal data only (default) |
+| `internet` | Web search only via SearXNG |
+| `hybrid` | Personal data + targeted web research |
+| `llm` | Direct LLM answer without retrieval |
 
 **Response:**
 ```json
@@ -1075,6 +1366,19 @@ Content-Type: application/json
   "sources": [...],
   "question": "What are my pending tasks related to the website?",
   "time_taken_ms": 1250.0
+}
+```
+
+**Hybrid Mode Response (includes search queries):**
+```json
+{
+  "answer": "Based on your notes about HIIT training, research suggests...",
+  "sources": [
+    {"type": "memory", "title": "Fitness plan notes", ...},
+    {"type": "web", "title": "HIIT Research Study", "url": "https://..."}
+  ],
+  "question": "Validate my fitness plan idea",
+  "time_taken_ms": 4500.0
 }
 ```
 
@@ -1364,10 +1668,13 @@ chunks := chunker.ChunkText(longDocument)
 | Embedding dimension | 1024 (NIM nv-embedqa-e5-v5) |
 | Search result limit | 10-20 for UI, 5 for Q&A context |
 | Vector weight | 0.7 (favor semantic search) |
+| Relevance threshold | 85% of top cosine similarity |
+| Gap detection | 20% drop from previous result |
 | FTS5 snippet length | 32 words |
 | Memory indexing | Async with 10s timeout |
 | Vector DB persistence | Enable for production |
 | Text sanitization | Always enabled (unicode, special chars) |
+| Hybrid mode latency | ~4-5s (2 LLM calls) vs ~2-3s (single call) |
 
 ---
 

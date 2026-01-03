@@ -4,7 +4,7 @@ Thank you for your interest in contributing to memlane! This document provides g
 
 ## Code of Conduct
 
-By participating in this project, you agree to maintain a respectful and inclusive environment for all contributors.
+This project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md) that all contributors are expected to follow. By participating in this project, you agree to maintain a respectful and inclusive environment for all contributors.
 
 ## How to Contribute
 

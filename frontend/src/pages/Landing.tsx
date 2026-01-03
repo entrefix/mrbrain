@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { ArrowRight } from '@phosphor-icons/react';
+import { useEffect } from 'react';
 
 function Hero() {
   return (
@@ -159,6 +160,24 @@ function SolutionSection() {
 }
 
 export default function Landing() {
+  useEffect(() => {
+    // Enable scrolling on the landing page
+    document.body.style.position = 'relative';
+    document.body.style.overflow = 'auto';
+    document.body.style.height = 'auto';
+    document.documentElement.style.overflow = 'auto';
+    document.documentElement.style.height = 'auto';
+    
+    // Cleanup: restore original styles when component unmounts
+    return () => {
+      document.body.style.position = 'fixed';
+      document.body.style.overflow = 'hidden';
+      document.body.style.height = '100%';
+      document.documentElement.style.overflow = 'hidden';
+      document.documentElement.style.height = '100%';
+    };
+  }, []);
+
   return (
     <div className="min-h-screen">
       {/* Main content */}

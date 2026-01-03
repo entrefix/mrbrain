@@ -5,6 +5,7 @@ export { memoryApi } from './memories';
 export { ragApi } from './rag';
 export { default as aiProviderApi } from './aiProviders';
 export { userDataApi } from './userData';
+export { chatApi } from './chat';
 export type { LoginRequest, RegisterRequest } from './auth';
 export type { TodoReorderRequest } from './todos';
 export type {

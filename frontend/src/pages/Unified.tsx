@@ -3,7 +3,7 @@ import { AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { Gear, Plus, Cpu, Trash, Database } from '@phosphor-icons/react';
 import { useAuth } from '../contexts/AuthContext';
-import { memoryApi, todoApi, ragApi, aiProviderApi, userDataApi } from '../api';
+import { memoryApi, todoApi, ragApi, aiProviderApi, userDataApi, chatApi } from '../api';
 import type { Memory, Todo, RAGAskResponse, RAGSearchResult, UploadJobStatusResponse, AskMode } from '../types';
 import type { AIProvider, AIProviderModel, AIProviderCreate, DataStats } from '../api';
 import UnifiedGrid from '../components/UnifiedGrid';
@@ -63,6 +63,7 @@ export default function Unified() {
   const [askInputValue, setAskInputValue] = useState('');
   const [isAskLoading, setIsAskLoading] = useState(false);
   const [askMode, setAskMode] = useState<AskMode>('memories');
+  const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
 
   // Upload status
   const [uploadStatus, setUploadStatus] = useState<UploadJobStatusResponse | null>(null);
@@ -76,8 +77,32 @@ export default function Unified() {
   useEffect(() => {
     if (user) {
       fetchData();
+      loadChatThread();
     }
   }, [user]);
+
+  // Load chat thread on mount
+  const loadChatThread = async () => {
+    try {
+      const response = await chatApi.getActiveThread();
+      setCurrentThreadId(response.thread.id);
+      
+      // Convert backend messages to frontend Message format
+      const loadedMessages: Message[] = response.messages.map((msg) => ({
+        id: msg.id,
+        type: msg.role as 'user' | 'assistant',
+        content: msg.content,
+        timestamp: new Date(msg.created_at),
+        mode: msg.mode as AskMode | undefined,
+        sources: msg.sources ? JSON.parse(msg.sources) : undefined,
+      }));
+      
+      setAskMessages(loadedMessages);
+    } catch (error) {
+      console.error('Failed to load chat thread:', error);
+      // If no thread exists, one will be created on first message
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -306,6 +331,19 @@ export default function Unified() {
 
     const loadingId = (Date.now() + 1).toString();
 
+    // Ensure we have a thread ID
+    let threadId = currentThreadId;
+    if (!threadId) {
+      try {
+        const threadResponse = await chatApi.getActiveThread();
+        threadId = threadResponse.thread.id;
+        setCurrentThreadId(threadId);
+      } catch (error) {
+        console.error('Failed to get/create thread:', error);
+        // Continue without persistence if thread creation fails
+      }
+    }
+
     // For new queries: add new user message + loading (keep existing messages for stack)
     // For regenerate: just add loading message to existing
     if (!skipUserMessage) {
@@ -316,6 +354,20 @@ export default function Unified() {
         timestamp: new Date(),
         mode: askMode, // Store the mode with the user message
       };
+      
+      // Save user message to backend
+      if (threadId) {
+        try {
+          await chatApi.addMessage(threadId, {
+            role: 'user',
+            content: query,
+            mode: askMode,
+          });
+        } catch (error) {
+          console.error('Failed to save user message:', error);
+        }
+      }
+      
       // Add new messages to existing (stack effect)
       setAskMessages((prev) => [
         ...prev,
@@ -365,6 +417,20 @@ export default function Unified() {
             : msg
         )
       );
+
+      // Save assistant message to backend
+      if (threadId) {
+        try {
+          await chatApi.addMessage(threadId, {
+            role: 'assistant',
+            content: response.answer,
+            mode: askMode,
+            sources: response.sources ? JSON.stringify(response.sources) : undefined,
+          });
+        } catch (error) {
+          console.error('Failed to save assistant message:', error);
+        }
+      }
 
       // Extract and split citations - CLEAR completely before adding new ones
       // Clear existing citations first
@@ -899,7 +965,25 @@ export default function Unified() {
               onInputChange={setAskInputValue}
               onSubmit={handleAskSubmit}
               onRegenerate={handleRegenerateQuery}
-              onClear={() => {
+              onClear={async () => {
+                // Delete current thread and create a new one
+                if (currentThreadId) {
+                  try {
+                    await chatApi.deleteThread(currentThreadId);
+                  } catch (error) {
+                    console.error('Failed to delete thread:', error);
+                  }
+                }
+                
+                // Create new thread
+                try {
+                  const newThread = await chatApi.createThread();
+                  setCurrentThreadId(newThread.thread.id);
+                } catch (error) {
+                  console.error('Failed to create new thread:', error);
+                  setCurrentThreadId(null);
+                }
+                
                 setAskMessages([]);
                 setMemoryCitations([]);
                 setTodoCitations([]);

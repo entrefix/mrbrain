@@ -18,6 +18,7 @@ func Setup(
 	userDataService *services.UserDataService,
 	fileParserService *services.FileParserService,
 	uploadJobService *services.UploadJobService,
+	chatService *services.ChatService,
 	allowedOrigins []string,
 ) *gin.Engine {
 	r := gin.Default()
@@ -43,6 +44,7 @@ func Setup(
 	memoryHandler := handlers.NewMemoryHandler(memoryService, fileParserService, uploadJobService)
 	ragHandler := handlers.NewRAGHandler(ragService)
 	userDataHandler := handlers.NewUserDataHandler(userDataService)
+	chatHandler := handlers.NewChatHandler(chatService)
 
 	// API routes
 	api := r.Group("/api")
@@ -114,6 +116,14 @@ func Setup(
 			protected.GET("/user/data/stats", userDataHandler.GetDataStats)
 			protected.POST("/user/data/clear-memories", userDataHandler.ClearMemories)
 			protected.POST("/user/data/clear-all", userDataHandler.ClearAllData)
+
+			// Chat Threads
+			protected.GET("/chat/threads/active", chatHandler.GetActiveThread)
+			protected.GET("/chat/threads", chatHandler.GetAllThreads)
+			protected.GET("/chat/threads/:id", chatHandler.GetThread)
+			protected.POST("/chat/threads", chatHandler.CreateThread)
+			protected.POST("/chat/threads/:id/messages", chatHandler.AddMessage)
+			protected.DELETE("/chat/threads/:id", chatHandler.DeleteThread)
 		}
 	}
 

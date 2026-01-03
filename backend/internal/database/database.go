@@ -142,6 +142,25 @@ func runMigrations(db *sql.DB) error {
 		UNIQUE(user_id, week_start)
 	);
 
+	-- Chat threads table
+	CREATE TABLE IF NOT EXISTS chat_threads (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Chat messages table
+	CREATE TABLE IF NOT EXISTS chat_messages (
+		id TEXT PRIMARY KEY,
+		thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+		role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+		content TEXT NOT NULL,
+		mode TEXT,
+		sources TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	-- Indexes
 	CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 	CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
@@ -159,6 +178,9 @@ func runMigrations(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_memories_is_archived ON memories(is_archived);
 	CREATE INDEX IF NOT EXISTS idx_memory_categories_user_id ON memory_categories(user_id);
 	CREATE INDEX IF NOT EXISTS idx_memory_digests_user_id ON memory_digests(user_id);
+	CREATE INDEX IF NOT EXISTS idx_chat_threads_user_id ON chat_threads(user_id);
+	CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id ON chat_messages(thread_id);
+	CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at);
 	`
 
 	if _, err := db.Exec(schema); err != nil {

@@ -38,6 +38,7 @@ func main() {
 	groupRepo := repository.NewGroupRepository(db)
 	aiProviderRepo := repository.NewAIProviderRepository(db)
 	memoryRepo := repository.NewMemoryRepository(db)
+	chatRepo := repository.NewChatRepository(db)
 
 	// Initialize encryptor for API keys
 	encryptor := crypto.NewEncryptor(cfg.EncryptionKey)
@@ -132,8 +133,11 @@ func main() {
 	// Initialize upload job service
 	uploadJobService := services.NewUploadJobService()
 
+	// Initialize chat service
+	chatService := services.NewChatService(chatRepo)
+
 	// Setup router
-	r := router.Setup(authService, todoService, groupService, aiProviderService, memoryService, ragService, userDataService, fileParserService, uploadJobService, cfg.AllowedOrigins)
+	r := router.Setup(authService, todoService, groupService, aiProviderService, memoryService, ragService, userDataService, fileParserService, uploadJobService, chatService, cfg.AllowedOrigins)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)

@@ -10,7 +10,6 @@ import AIProviderForm from '../components/AIProviderForm';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 
 export default function Settings() {
-  const { theme, toggleTheme } = useTheme();
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [pushNotifications, setPushNotifications] = useState(true);
 

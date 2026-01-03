@@ -505,6 +505,52 @@ export function formatDateForDisplay(date: Date): string {
 }
 
 /**
+ * Get date urgency level for todo due dates
+ */
+export function getDateUrgency(dueDate: string | null): 'overdue' | 'today' | 'this-week' | 'future' | null {
+  if (!dueDate) return null;
+  const date = new Date(dueDate);
+  const today = startOfDay(new Date());
+  const diffDays = Math.round((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  
+  if (diffDays < 0) return 'overdue';
+  if (diffDays === 0) return 'today';
+  if (diffDays <= 7) return 'this-week';
+  return 'future';
+}
+
+/**
+ * Check if a date is overdue
+ */
+export function isOverdue(date: string | null): boolean {
+  if (!date) return false;
+  const dueDate = new Date(date);
+  const today = startOfDay(new Date());
+  return dueDate.getTime() < today.getTime();
+}
+
+/**
+ * Check if a date is due today
+ */
+export function isDueToday(date: string | null): boolean {
+  if (!date) return false;
+  const dueDate = startOfDay(new Date(date));
+  const today = startOfDay(new Date());
+  return dueDate.getTime() === today.getTime();
+}
+
+/**
+ * Check if a date is due this week
+ */
+export function isDueThisWeek(date: string | null): boolean {
+  if (!date) return false;
+  const dueDate = new Date(date);
+  const today = startOfDay(new Date());
+  const diffDays = Math.round((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  return diffDays >= 0 && diffDays <= 7;
+}
+
+/**
  * Convert Date to datetime-local input format
  */
 export function dateToInputFormat(date: Date): string {

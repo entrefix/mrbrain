@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
-import { Gear, Plus, Cpu, Trash, Database } from '@phosphor-icons/react';
+import { Gear, Plus, Cpu, Trash, Database, GridFour, List } from '@phosphor-icons/react';
 import { useAuth } from '../contexts/AuthContext';
 import { memoryApi, todoApi, ragApi, aiProviderApi, userDataApi, chatApi } from '../api';
 import type { Memory, Todo, RAGAskResponse, RAGSearchResult, UploadJobStatusResponse, AskMode } from '../types';
 import type { AIProvider, AIProviderModel, AIProviderCreate, DataStats } from '../api';
 import UnifiedGrid from '../components/UnifiedGrid';
+import UnifiedList from '../components/UnifiedList';
 import CreateNoteModal from '../components/CreateNoteModal';
 import NoteDetailModal from '../components/NoteDetailModal';
 import ImportModal from '../components/ImportModal';
@@ -29,6 +30,7 @@ interface Message {
 }
 
 type ActiveTab = 'mems' | 'todos';
+type ViewMode = 'grid' | 'list';
 
 // Citation type for grid display
 type CitationItem = {
@@ -44,6 +46,11 @@ export default function Unified() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<ActiveTab>('mems');
   const [showSettings, setShowSettings] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    // Load from localStorage, default to grid
+    const saved = localStorage.getItem('todo_view_mode');
+    return (saved === 'list' || saved === 'grid') ? saved : 'grid';
+  });
   
   // Data states
   const [memories, setMemories] = useState<(Memory | PendingMemory)[]>([]);
@@ -72,6 +79,13 @@ export default function Unified() {
   const [showOnboarding, setShowOnboarding] = useState(() => {
     return !localStorage.getItem('memlane_onboarding_complete');
   });
+
+  // Save view mode to localStorage when it changes
+  useEffect(() => {
+    if (activeTab === 'todos') {
+      localStorage.setItem('todo_view_mode', viewMode);
+    }
+  }, [viewMode, activeTab]);
 
   // Load initial data
   useEffect(() => {
@@ -134,8 +148,34 @@ export default function Unified() {
       if (todoCitations.length > 0) {
         return todoCitations;
       }
-      // Otherwise show all todos
-      return todos;
+      // Sort todos: pending first, completed last
+      const sortedTodos = [...todos].sort((a, b) => {
+        // Only sort actual Todo items, not PendingTodo
+        if ('isProcessing' in a || 'isProcessing' in b) {
+          return 0; // Keep processing items in place
+        }
+        
+        const todoA = a as Todo;
+        const todoB = b as Todo;
+        
+        // Pending todos come first
+        if (todoA.status === 'pending' && todoB.status === 'completed') return -1;
+        if (todoA.status === 'completed' && todoB.status === 'pending') return 1;
+        
+        // Within same status, sort by position (for pending) or updated_at (for completed)
+        if (todoA.status === 'pending' && todoB.status === 'pending') {
+          return parseInt(todoA.position) - parseInt(todoB.position);
+        }
+        
+        // Completed todos: most recently completed first
+        if (todoA.status === 'completed' && todoB.status === 'completed') {
+          return new Date(todoB.updated_at).getTime() - new Date(todoA.updated_at).getTime();
+        }
+        
+        return 0;
+      });
+      
+      return sortedTodos;
     }
   }, [activeTab, memories, todos, memoryCitations, todoCitations]);
 
@@ -261,6 +301,66 @@ export default function Unified() {
     } catch (error) {
       toast.error('Failed to update item');
       throw error;
+    }
+  };
+
+  // Handle quick status toggle for todos
+  const handleQuickStatusToggle = async (todoId: string, currentStatus: 'pending' | 'completed') => {
+    const newStatus: 'pending' | 'completed' = currentStatus === 'pending' ? 'completed' : 'pending';
+    await handleUpdateItem(todoId, { status: newStatus });
+  };
+
+  // Handle todo reorder
+  const handleTodoReorder = async (reorderedTodos: Todo[]) => {
+    try {
+      // Separate pending and completed from reordered todos to maintain their separation
+      const pendingTodos = reorderedTodos.filter(t => t.status === 'pending');
+      const completedTodos = reorderedTodos.filter(t => t.status === 'completed');
+      
+      // Calculate positions: pending get 1000, 2000, 3000... and completed get higher positions
+      const reorderData: Array<{ id: string; position: string }> = [];
+      
+      // Add pending todos with positions starting at 1000
+      pendingTodos.forEach((todo, index) => {
+        reorderData.push({
+          id: todo.id,
+          position: String((index + 1) * 1000),
+        });
+      });
+      
+      // Add completed todos with positions after pending (e.g., if 3 pending, start at 4000)
+      const completedStartPosition = (pendingTodos.length + 1) * 1000;
+      completedTodos.forEach((todo, index) => {
+        reorderData.push({
+          id: todo.id,
+          position: String(completedStartPosition + (index * 1000)),
+        });
+      });
+
+      // Call API to save new positions
+      await todoApi.reorder({ todos: reorderData });
+      
+      // Update local state with todos that have new positions
+      const updatedTodos = todos.map((todo) => {
+        const positionData = reorderData.find(r => r.id === todo.id);
+        if (positionData) {
+          // Update position for reordered todos
+          const reorderedTodo = reorderedTodos.find(t => t.id === todo.id);
+          return {
+            ...(reorderedTodo || todo),
+            position: positionData.position,
+          };
+        }
+        // Keep todos that weren't reordered unchanged
+        return todo;
+      });
+      
+      setTodos(updatedTodos);
+    } catch (error) {
+      console.error('Failed to reorder todos:', error);
+      toast.error('Failed to reorder todos');
+      // Refresh to get correct order from server
+      await fetchData();
     }
   };
 
@@ -904,6 +1004,34 @@ export default function Unified() {
           </div>
           
           <div className="flex items-center gap-4">
+            {/* View Toggle - Only show for todos */}
+            {activeTab === 'todos' && !showSettings && (
+              <div className="flex items-center gap-1 bg-surface-light-muted dark:bg-surface-dark-muted rounded-lg p-1">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`p-1.5 rounded transition-colors ${
+                    viewMode === 'grid'
+                      ? 'bg-primary-600 text-white dark:bg-primary-500'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                  }`}
+                  title="Grid View"
+                >
+                  <GridFour size={18} weight="regular" />
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`p-1.5 rounded transition-colors ${
+                    viewMode === 'list'
+                      ? 'bg-primary-600 text-white dark:bg-primary-500'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                  }`}
+                  title="List View"
+                >
+                  <List size={18} weight="regular" />
+                </button>
+              </div>
+            )}
+            
             <button
               onClick={() => {
                 setShowSettings(!showSettings);
@@ -943,14 +1071,31 @@ export default function Unified() {
                 <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-600"></div>
               </div>
             ) : (
-              <UnifiedGrid
-                items={displayItems}
-                type={activeTab === 'mems' ? 'memory' : 'todo'}
-                onCreateClick={() => setIsCreateModalOpen(true)}
-                onImportClick={() => setIsImportModalOpen(true)}
-                onItemClick={handleItemClick}
-                uploadStatus={uploadStatus}
-              />
+              <>
+                {activeTab === 'todos' && viewMode === 'list' ? (
+                  <UnifiedList
+                    items={displayItems}
+                    type="todo"
+                    onCreateClick={() => setIsCreateModalOpen(true)}
+                    onImportClick={() => setIsImportModalOpen(true)}
+                    onItemClick={handleItemClick}
+                    onItemUpdate={handleQuickStatusToggle}
+                    onReorder={handleTodoReorder}
+                    uploadStatus={uploadStatus}
+                  />
+                ) : (
+                  <UnifiedGrid
+                    items={displayItems}
+                    type={activeTab === 'mems' ? 'memory' : 'todo'}
+                    onCreateClick={() => setIsCreateModalOpen(true)}
+                    onImportClick={() => setIsImportModalOpen(true)}
+                    onItemClick={handleItemClick}
+                    onItemUpdate={activeTab === 'todos' ? handleQuickStatusToggle : undefined}
+                    onReorder={activeTab === 'todos' ? handleTodoReorder : undefined}
+                    uploadStatus={uploadStatus}
+                  />
+                )}
+              </>
             )}
           </div>
         )}

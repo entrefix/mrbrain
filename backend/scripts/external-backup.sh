@@ -1,12 +1,15 @@
 #!/bin/bash
-# External backup script - copies database backups to external location
+# External backup script - copies database backups from Docker volume to external location
 # Run this on the host machine (not inside Docker)
+# This protects against Docker volume corruption/deletion
 # Usage: ./external-backup.sh [optional-external-path]
 
 set -e
 
 # Configuration
-PROJECT_DIR="${HOME}/mrbrain"
+# Find the project directory (where docker-compose.yml is located)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DATA_DIR="${PROJECT_DIR}/data"
 EXTERNAL_BACKUP_DIR="${1:-${HOME}/backups/todomyday}"
 RETENTION_DAYS=30

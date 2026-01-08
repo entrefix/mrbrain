@@ -41,6 +41,44 @@ func main() {
 
 	log.Printf("Connected to database: %s", cfg.DatabasePath)
 
+	// === Database Health Checks ===
+
+	// 1. Check WAL checkpoint status and recover if needed
+	log.Println("Performing database health checks...")
+	var walCheckpointResult string
+	err = db.QueryRow("PRAGMA wal_checkpoint(PASSIVE)").Scan(&walCheckpointResult)
+	if err != nil {
+		log.Printf("Warning: WAL checkpoint failed: %v", err)
+	} else {
+		log.Printf("WAL checkpoint status: %s", walCheckpointResult)
+	}
+
+	// 2. Verify database integrity
+	var integrityCheck string
+	err = db.QueryRow("PRAGMA integrity_check").Scan(&integrityCheck)
+	if err != nil {
+		log.Printf("Warning: Integrity check failed: %v", err)
+	} else if integrityCheck != "ok" {
+		log.Printf("⚠️  WARNING: Database integrity check failed: %s", integrityCheck)
+	} else {
+		log.Println("✅ Database integrity check passed")
+	}
+
+	// 3. Check critical table counts
+	var userCount, todoCount, memoryCount int
+	db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
+	db.QueryRow("SELECT COUNT(*) FROM todos").Scan(&todoCount)
+	db.QueryRow("SELECT COUNT(*) FROM memories").Scan(&memoryCount)
+	log.Printf("Database stats - Users: %d, Todos: %d, Memories: %d", userCount, todoCount, memoryCount)
+
+	// 4. Check for WAL file presence
+	var journalMode string
+	db.QueryRow("PRAGMA journal_mode").Scan(&journalMode)
+	log.Printf("Journal mode: %s", journalMode)
+
+	log.Println("Database health checks complete")
+	// === End Health Checks ===
+
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	todoRepo := repository.NewTodoRepository(db)

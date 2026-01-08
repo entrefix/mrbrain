@@ -19,6 +19,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o migrate-users ./s
 # Build check users script
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o check-users ./scripts/check_users.go
 
+# Build check memories script
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o check-memories ./scripts/check_memories.go
+
 # Final stage
 FROM alpine:3.19
 
@@ -31,6 +34,7 @@ RUN apk --no-cache add ca-certificates tzdata sqlite
 COPY --from=builder /app/main .
 COPY --from=builder /app/migrate-users .
 COPY --from=builder /app/check-users .
+COPY --from=builder /app/check-memories .
 
 # Copy scripts for database management
 COPY --from=builder /app/scripts /app/scripts

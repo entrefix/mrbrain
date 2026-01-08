@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -300,13 +301,39 @@ func runDataMigrations(db *sql.DB) error {
 		SELECT "notnull" FROM pragma_table_info('users') WHERE name = 'password_hash'
 	`).Scan(&passwordHashNullable)
 	if err == nil && passwordHashNullable == 1 {
-		// SQLite doesn't support ALTER COLUMN, so we need to recreate the table
 		log.Println("Migrating users table to make password_hash nullable...")
 
-		_, err := db.Exec(`
-			BEGIN TRANSACTION;
+		// Step 1: Create backup BEFORE any migration
+		backupPath := fmt.Sprintf("/data/todomyday-pre-migration-%s.db", time.Now().Format("20060102-150405"))
+		log.Printf("Creating backup at: %s", backupPath)
+		_, err := db.Exec("VACUUM INTO '" + backupPath + "'")
+		if err != nil {
+			log.Printf("Warning: Failed to create backup: %v", err)
+			// Continue anyway - user data is already at risk
+		} else {
+			log.Println("Backup created successfully")
+		}
 
-			-- Create new users table with nullable password_hash
+		// Step 2: Checkpoint WAL to ensure data consistency
+		log.Println("Checkpointing WAL before migration...")
+		db.Exec("PRAGMA wal_checkpoint(FULL)")
+
+		// Step 3: Begin transaction with proper error handling
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+		// Ensure rollback on panic or error
+		defer func() {
+			if p := recover(); p != nil {
+				tx.Rollback()
+				panic(p)
+			}
+		}()
+
+		// Step 4: Create new table
+		log.Println("Creating users_new table...")
+		_, err = tx.Exec(`
 			CREATE TABLE users_new (
 				id TEXT PRIMARY KEY,
 				supabase_id TEXT UNIQUE,
@@ -316,29 +343,78 @@ func runDataMigrations(db *sql.DB) error {
 				theme TEXT DEFAULT 'light',
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-			);
-
-			-- Copy data from old table
-			INSERT INTO users_new (id, supabase_id, email, password_hash, full_name, theme, created_at, updated_at)
-			SELECT id, supabase_id, email, password_hash, full_name, theme, created_at, updated_at
-			FROM users;
-
-			-- Drop old table
-			DROP TABLE users;
-
-			-- Rename new table
-			ALTER TABLE users_new RENAME TO users;
-
-			-- Recreate indexes
-			CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_users_supabase_id ON users(supabase_id) WHERE supabase_id IS NOT NULL;
-
-			COMMIT;
+			)
 		`)
 		if err != nil {
-			return fmt.Errorf("failed to migrate users table: %w", err)
+			tx.Rollback()
+			return fmt.Errorf("failed to create new users table: %w", err)
 		}
-		log.Println("Successfully migrated users table")
+
+		// Step 5: Copy data (verify count first)
+		var userCount int
+		err = tx.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to count users: %w", err)
+		}
+		log.Printf("Copying %d users to new table...", userCount)
+
+		_, err = tx.Exec(`
+			INSERT INTO users_new (id, supabase_id, email, password_hash, full_name, theme, created_at, updated_at)
+			SELECT id, supabase_id, email, password_hash, full_name, theme, created_at, updated_at
+			FROM users
+		`)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to copy data to new users table: %w", err)
+		}
+
+		// Verify copied count
+		var copiedCount int
+		err = tx.QueryRow("SELECT COUNT(*) FROM users_new").Scan(&copiedCount)
+		if err != nil || copiedCount != userCount {
+			tx.Rollback()
+			return fmt.Errorf("data copy verification failed: original=%d, copied=%d", userCount, copiedCount)
+		}
+		log.Printf("Verified: %d users copied successfully", copiedCount)
+
+		// Step 6: Drop old table
+		log.Println("Dropping old users table...")
+		_, err = tx.Exec("DROP TABLE users")
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to drop old users table: %w", err)
+		}
+
+		// Step 7: Rename new table
+		log.Println("Renaming users_new to users...")
+		_, err = tx.Exec("ALTER TABLE users_new RENAME TO users")
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to rename users_new table: %w", err)
+		}
+
+		// Step 8: Recreate indexes
+		log.Println("Recreating indexes...")
+		_, err = tx.Exec("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to create email index: %w", err)
+		}
+
+		_, err = tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_supabase_id ON users(supabase_id) WHERE supabase_id IS NOT NULL")
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to create supabase_id index: %w", err)
+		}
+
+		// Step 9: Commit transaction
+		log.Println("Committing migration transaction...")
+		if err = tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit migration: %w", err)
+		}
+
+		log.Println("Successfully migrated users table with password_hash nullable")
 	}
 
 	return nil

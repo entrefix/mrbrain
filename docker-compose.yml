@@ -47,3 +47,17 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  backup:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: todomyday-backup
+    environment:
+      - DATABASE_PATH=/data/todomyday.db
+    volumes:
+      - ./data:/data
+    command: sh -c "while true; do sleep 7200 && /app/scripts/backup.sh; done"
+    restart: unless-stopped
+    depends_on:
+      - backend

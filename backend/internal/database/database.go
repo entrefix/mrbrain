@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -293,15 +294,51 @@ func runDataMigrations(db *sql.DB) error {
 		}
 	}
 
-	// Make password_hash nullable if it's not already
+	// Make password_hash nullable if it's not already (for Supabase users)
 	var passwordHashNullable int
 	err = db.QueryRow(`
 		SELECT "notnull" FROM pragma_table_info('users') WHERE name = 'password_hash'
 	`).Scan(&passwordHashNullable)
 	if err == nil && passwordHashNullable == 1 {
 		// SQLite doesn't support ALTER COLUMN, so we need to recreate the table
-		// For now, we'll just note that existing databases will need migration
-		// The new schema already has password_hash as nullable
+		log.Println("Migrating users table to make password_hash nullable...")
+
+		_, err := db.Exec(`
+			BEGIN TRANSACTION;
+
+			-- Create new users table with nullable password_hash
+			CREATE TABLE users_new (
+				id TEXT PRIMARY KEY,
+				supabase_id TEXT UNIQUE,
+				email TEXT UNIQUE NOT NULL,
+				password_hash TEXT,
+				full_name TEXT,
+				theme TEXT DEFAULT 'light',
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+
+			-- Copy data from old table
+			INSERT INTO users_new (id, supabase_id, email, password_hash, full_name, theme, created_at, updated_at)
+			SELECT id, supabase_id, email, password_hash, full_name, theme, created_at, updated_at
+			FROM users;
+
+			-- Drop old table
+			DROP TABLE users;
+
+			-- Rename new table
+			ALTER TABLE users_new RENAME TO users;
+
+			-- Recreate indexes
+			CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_users_supabase_id ON users(supabase_id) WHERE supabase_id IS NOT NULL;
+
+			COMMIT;
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to migrate users table: %w", err)
+		}
+		log.Println("Successfully migrated users table")
 	}
 
 	return nil

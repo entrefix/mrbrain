@@ -166,3 +166,4 @@ go run scripts/migrate_users_to_supabase.go
 - Ensure `supabase_id` column exists in users table (run migrations)
 
 
+

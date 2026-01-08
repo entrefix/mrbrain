@@ -51,7 +51,9 @@ func AuthMiddleware(supabaseAuthService *services.SupabaseAuthService) gin.Handl
 		// Sync user from Supabase to local database
 		user, err := supabaseAuthService.SyncUserFromToken(claims)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync user"})
+			fmt.Printf("ERROR: Failed to sync user from token: %v\n", err)
+			fmt.Printf("ERROR: Claims - Sub: %s, Email: %s\n", claims.Sub, claims.Email)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync user", "details": err.Error()})
 			c.Abort()
 			return
 		}

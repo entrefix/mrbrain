@@ -188,11 +188,19 @@ func main() {
 	// Initialize upload job service
 	uploadJobService := services.NewUploadJobService()
 
+	// Initialize vision service for image processing (GLM-4.5V)
+	visionService := services.NewVisionService(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, "glm-4.5v")
+	if visionService.IsConfigured() {
+		log.Println("Vision service configured with GLM-4.5V for image processing")
+	} else {
+		log.Println("Vision service not configured - image upload will be unavailable")
+	}
+
 	// Initialize chat service
 	chatService := services.NewChatService(chatRepo)
 
 	// Setup router
-	r := router.Setup(supabaseAuthService, userRepo, todoService, groupService, aiProviderService, memoryService, ragService, userDataService, fileParserService, uploadJobService, chatService, cfg.AllowedOrigins)
+	r := router.Setup(supabaseAuthService, userRepo, todoService, groupService, aiProviderService, memoryService, ragService, userDataService, fileParserService, uploadJobService, visionService, chatService, cfg.AllowedOrigins)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)

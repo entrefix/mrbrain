@@ -47,9 +47,12 @@ export default function Unified() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('mems');
   const [showSettings, setShowSettings] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    // Load from localStorage, default to grid
+    // Load from localStorage, default to list on mobile, grid on desktop
     const saved = localStorage.getItem('todo_view_mode');
-    return (saved === 'list' || saved === 'grid') ? saved : 'grid';
+    if (saved === 'list' || saved === 'grid') return saved;
+    // Default: list on mobile (< 640px), grid on desktop
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
+    return isMobile ? 'list' : 'grid';
   });
   
   // Data states
@@ -1061,10 +1064,10 @@ export default function Unified() {
             />
           </div>
           
-          <div className="flex items-center gap-4">
-            {/* View Toggle - Only show for todos */}
+          <div className="flex items-center gap-2 sm:gap-4">
+            {/* View Toggle - Only show for todos, hidden on mobile */}
             {activeTab === 'todos' && !showSettings && (
-              <div className="flex items-center gap-1 bg-surface-light-muted dark:bg-surface-dark-muted rounded-lg p-1">
+              <div className="hidden sm:flex items-center gap-1 bg-surface-light-muted dark:bg-surface-dark-muted rounded-lg p-1">
                 <button
                   onClick={() => setViewMode('grid')}
                   className={`p-1.5 rounded transition-colors ${
@@ -1203,6 +1206,11 @@ export default function Unified() {
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         onSubmit={handleCreateNote}
+        onImageCreated={async () => {
+          // Refresh memories when an image is uploaded and processed
+          const memoriesData = await memoryApi.getAll();
+          setMemories(memoriesData);
+        }}
         type={activeTab === 'mems' ? 'memory' : 'todo'}
       />
 

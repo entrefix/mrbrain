@@ -1,20 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useDebounce } from '../hooks/useDebounce';
+import { Image } from '@phosphor-icons/react';
+import { toast } from 'react-hot-toast';
+import { memoryApi } from '../api';
 
 interface CreateNoteModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (title: string, content: string) => Promise<void>;
+  onImageCreated?: () => void; // Callback when image creates a memory directly
   type: 'memory' | 'todo';
 }
 
-export default function CreateNoteModal({ isOpen, onClose, onSubmit, type }: CreateNoteModalProps) {
+export default function CreateNoteModal({ isOpen, onClose, onSubmit, onImageCreated, type }: CreateNoteModalProps) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [autoTitle, setAutoTitle] = useState('');
+  const [isImageUploading, setIsImageUploading] = useState(false);
   const contentRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-generate title from content
   useEffect(() => {
@@ -99,6 +104,49 @@ export default function CreateNoteModal({ isOpen, onClose, onSubmit, type }: Cre
     }
   };
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      toast.error('Invalid image type. Supported: JPG, PNG, GIF, WebP');
+      e.target.value = '';
+      return;
+    }
+
+    // Validate file size (max 10MB)
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error('Image too large. Maximum size is 10MB');
+      e.target.value = '';
+      return;
+    }
+
+    setIsImageUploading(true);
+
+    try {
+      const result = await memoryApi.uploadImage(file);
+
+      // Show success message
+      const categoryInfo = result.vision_result.category !== 'Uncategorized'
+        ? ` (${result.vision_result.category})`
+        : '';
+      toast.success(`Image processed${categoryInfo}! Notes extracted.`);
+
+      // Close modal and notify parent to refresh
+      onClose();
+      onImageCreated?.();
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.error || 'Failed to process image';
+      toast.error(errorMsg);
+    } finally {
+      setIsImageUploading(false);
+      e.target.value = '';
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -158,11 +206,47 @@ export default function CreateNoteModal({ isOpen, onClose, onSubmit, type }: Cre
             </div>
 
             {/* Footer - Google Keep style */}
-            <div className="px-6 py-3 flex items-center justify-end border-t border-gray-100 dark:border-gray-800">
+            <div className="px-6 py-3 flex items-center justify-between border-t border-gray-100 dark:border-gray-800">
+              {/* Image Upload - Only for memories */}
+              <div className="flex items-center gap-2">
+                {type === 'memory' && (
+                  <label className={`group relative ${isImageUploading ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                      disabled={isImageUploading || isSaving}
+                    />
+                    <div className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded transition-colors ${
+                      isImageUploading
+                        ? 'text-gray-400 dark:text-gray-500'
+                        : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+                    }`}>
+                      {isImageUploading ? (
+                        <div className="w-4 h-4 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Image size={18} weight="regular" />
+                      )}
+                      <span className="hidden sm:inline">
+                        {isImageUploading ? 'Processing...' : 'Upload Image'}
+                      </span>
+                    </div>
+                    {/* Tooltip */}
+                    {!isImageUploading && (
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                        Extract notes from image
+                      </div>
+                    )}
+                  </label>
+                )}
+              </div>
+
               <button
                 type="button"
                 onClick={handleClose}
-                disabled={isSaving}
+                disabled={isSaving || isImageUploading}
                 className="px-5 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {isSaving ? 'Saving...' : (

@@ -145,6 +145,50 @@ func (s *MemoryService) Create(userID string, req *models.MemoryCreateRequest) (
 	return memory, nil
 }
 
+// CreateWithCategory creates a memory with pre-determined category and summary (used by vision service)
+func (s *MemoryService) CreateWithCategory(userID string, req *models.MemoryCreateRequest, category, summary string) (*models.Memory, error) {
+	log.Printf("[MemoryService] Creating memory with category for user %s: category=%s", userID, category)
+
+	// Get max position for new memory
+	maxPos, err := s.memoryRepo.GetMaxPosition(userID)
+	if err != nil {
+		maxPos = 0
+	}
+
+	memory := &models.Memory{
+		UserID:   userID,
+		Content:  req.Content,
+		Category: category,
+		Position: fmt.Sprintf("%d", maxPos+1000),
+	}
+
+	if summary != "" {
+		memory.Summary = &summary
+	}
+
+	// Store memory
+	if err := s.memoryRepo.Create(memory); err != nil {
+		return nil, err
+	}
+
+	// Async RAG indexing - fire and forget
+	if s.ragService != nil && s.ragService.IsConfigured() {
+		log.Printf("[MemoryService] Indexing memory %s to vector database (async)", memory.ID)
+		go func(m *models.Memory) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := s.ragService.IndexMemory(ctx, m); err != nil {
+				log.Printf("[MemoryService] Failed to index memory %s: %v", m.ID, err)
+			} else {
+				log.Printf("[MemoryService] Successfully indexed memory %s", m.ID)
+			}
+		}(memory)
+	}
+
+	log.Printf("[MemoryService] Created memory %s with category %s (from vision)", memory.ID, memory.Category)
+	return memory, nil
+}
+
 // getAIConfig returns the AI provider configuration for a user
 func (s *MemoryService) getAIConfig(userID string) *AIProviderConfig {
 	// Try user's configured provider first

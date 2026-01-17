@@ -18,13 +18,15 @@ type MemoryHandler struct {
 	memoryService     *services.MemoryService
 	fileParserService *services.FileParserService
 	uploadJobService  *services.UploadJobService
+	visionService     *services.VisionService
 }
 
-func NewMemoryHandler(memoryService *services.MemoryService, fileParserService *services.FileParserService, uploadJobService *services.UploadJobService) *MemoryHandler {
+func NewMemoryHandler(memoryService *services.MemoryService, fileParserService *services.FileParserService, uploadJobService *services.UploadJobService, visionService *services.VisionService) *MemoryHandler {
 	return &MemoryHandler{
 		memoryService:     memoryService,
 		fileParserService: fileParserService,
 		uploadJobService:  uploadJobService,
+		visionService:     visionService,
 	}
 }
 
@@ -382,4 +384,101 @@ func (h *MemoryHandler) GetUploadJobStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, status)
+}
+
+// UploadImage handles image upload and extracts notes/details using GLM-4.5V
+func (h *MemoryHandler) UploadImage(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	// Check if vision service is configured
+	if h.visionService == nil || !h.visionService.IsConfigured() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Vision service not configured"})
+		return
+	}
+
+	// Get uploaded file
+	file, err := c.FormFile("image")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No image uploaded"})
+		return
+	}
+
+	// Validate file type
+	contentType := file.Header.Get("Content-Type")
+	validTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/jpg":  true,
+		"image/png":  true,
+		"image/gif":  true,
+		"image/webp": true,
+	}
+
+	// Also check by extension if content-type is not reliable
+	ext := filepath.Ext(file.Filename)
+	validExts := map[string]string{
+		".jpg":  "image/jpeg",
+		".jpeg": "image/jpeg",
+		".png":  "image/png",
+		".gif":  "image/gif",
+		".webp": "image/webp",
+	}
+
+	if !validTypes[contentType] {
+		if mimeType, ok := validExts[ext]; ok {
+			contentType = mimeType
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid image type. Supported: JPG, PNG, GIF, WebP"})
+			return
+		}
+	}
+
+	// Validate file size (max 10MB)
+	maxSize := int64(10 * 1024 * 1024)
+	if file.Size > maxSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Image too large. Maximum size is 10MB"})
+		return
+	}
+
+	// Read file content
+	fileContent, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read image"})
+		return
+	}
+	defer fileContent.Close()
+
+	imageData, err := io.ReadAll(fileContent)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read image content"})
+		return
+	}
+
+	log.Printf("[UploadImage] Processing image for user %s: %s (%s, %d bytes)", userID, file.Filename, contentType, len(imageData))
+
+	// Process image with vision service
+	visionResult, err := h.visionService.ProcessImage(imageData, contentType)
+	if err != nil {
+		log.Printf("[UploadImage] Vision processing failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to process image: %v", err)})
+		return
+	}
+
+	// Create memory from extracted content
+	req := &models.MemoryCreateRequest{
+		Content: visionResult.Content,
+	}
+
+	memory, err := h.memoryService.CreateWithCategory(userID, req, visionResult.Category, visionResult.Summary)
+	if err != nil {
+		log.Printf("[UploadImage] Failed to create memory: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save memory"})
+		return
+	}
+
+	log.Printf("[UploadImage] Created memory %s from image with category %s", memory.ID, memory.Category)
+
+	c.JSON(http.StatusCreated, gin.H{
+		"memory":        memory,
+		"vision_result": visionResult,
+	})
 }

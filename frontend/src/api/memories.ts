@@ -113,4 +113,16 @@ export const memoryApi = {
   reorder: async (data: { memories: Array<{ id: string; position: string }> }): Promise<void> => {
     await client.put('/memories/reorder', data);
   },
+
+  uploadImage: async (file: File): Promise<{ memory: Memory; vision_result: { content: string; summary: string; category: string; tags: string[] } }> => {
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const response = await client.post('/memories/upload-image', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
 };

@@ -291,7 +291,7 @@ export default function AskAIResults({
   mode,
   onModeChange,
 }: AskAIResultsProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [activeCardIndex, setActiveCardIndex] = useState(0);
   const [modalCard, setModalCard] = useState<CardData | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -429,13 +429,21 @@ export default function AskAIResults({
   };
 
   // Handle Tab key to cycle modes when input is focused
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  // Handle Enter to submit, Shift+Enter for new line
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
       const currentIndex = modes.findIndex(m => m.id === mode);
       const nextIndex = (currentIndex + 1) % modes.length;
       onModeChange(modes[nextIndex].id);
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      // Enter submits the form
+      e.preventDefault();
+      if (inputValue.trim() && !isLoading) {
+        onSubmit(e as any);
+      }
     }
+    // Shift+Enter allows default behavior (new line)
   };
 
   // Close dropup when clicking outside
@@ -758,9 +766,8 @@ export default function AskAIResults({
                   </AnimatePresence>
                 </div>
 
-                <input
+                <textarea
                   ref={inputRef}
-                  type="text"
                   value={inputValue}
                   onChange={(e) => onInputChange(e.target.value)}
                   onKeyDown={handleInputKeyDown}
@@ -771,7 +778,17 @@ export default function AskAIResults({
                     'Ask anything...'
                   }
                   disabled={isLoading}
-                  className="flex-1 bg-transparent border-none outline-none text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 text-sm"
+                  rows={1}
+                  className="flex-1 bg-transparent border-none outline-none text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 text-sm resize-none overflow-hidden"
+                  style={{
+                    minHeight: '24px',
+                    maxHeight: '120px',
+                  }}
+                  onInput={(e) => {
+                    const target = e.target as HTMLTextAreaElement;
+                    target.style.height = 'auto';
+                    target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
+                  }}
                 />
                 <button
                   type="submit"

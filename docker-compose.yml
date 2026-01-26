@@ -1,4 +1,19 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: todomyday-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -6,6 +21,9 @@ services:
     container_name: todomyday-backend
     ports:
       - "8099:8099"
+    depends_on:
+      redis:
+        condition: service_healthy
     environment:
       - DATABASE_PATH=/data/todomyday.db
       - JWT_SECRET=${JWT_SECRET}
@@ -29,6 +47,11 @@ services:
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      # Redis settings
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_ENABLED=${REDIS_ENABLED:-true}
     volumes:
       - ./data:/data
     healthcheck:
@@ -67,3 +90,6 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+
+volumes:
+  redis-data:

@@ -17,6 +17,7 @@ type MemoryService struct {
 	aiProviderService *AIProviderService
 	scraperService    *ScraperService
 	ragService        *RAGService
+	cacheService      *CacheService
 }
 
 func NewMemoryService(
@@ -26,6 +27,7 @@ func NewMemoryService(
 	aiProviderService *AIProviderService,
 	scraperService *ScraperService,
 	ragService *RAGService,
+	cacheService *CacheService,
 ) *MemoryService {
 	return &MemoryService{
 		memoryRepo:        memoryRepo,
@@ -34,6 +36,7 @@ func NewMemoryService(
 		aiProviderService: aiProviderService,
 		scraperService:    scraperService,
 		ragService:        ragService,
+		cacheService:      cacheService,
 	}
 }
 
@@ -142,6 +145,11 @@ func (s *MemoryService) Create(userID string, req *models.MemoryCreateRequest) (
 	}
 
 	log.Printf("[MemoryService] Created memory %s with category %s", memory.ID, memory.Category)
+	// Invalidate cache
+	if s.cacheService != nil {
+		_ = s.cacheService.InvalidateUserMemories(userID)
+	}
+
 	return memory, nil
 }
 
@@ -208,6 +216,11 @@ func (s *MemoryService) CreateFromChat(userID string, req *models.MemoryCreateFr
 	}
 
 	log.Printf("[MemoryService] Created memory from chat %s with category %s", memory.ID, memory.Category)
+	// Invalidate cache
+	if s.cacheService != nil {
+		_ = s.cacheService.InvalidateUserMemories(userID)
+	}
+
 	return memory, nil
 }
 
@@ -252,6 +265,11 @@ func (s *MemoryService) CreateWithCategory(userID string, req *models.MemoryCrea
 	}
 
 	log.Printf("[MemoryService] Created memory %s with category %s (from vision)", memory.ID, memory.Category)
+	// Invalidate cache
+	if s.cacheService != nil {
+		_ = s.cacheService.InvalidateUserMemories(userID)
+	}
+
 	return memory, nil
 }
 
@@ -288,7 +306,34 @@ func (s *MemoryService) getAIConfig(userID string) *AIProviderConfig {
 
 // GetAll retrieves memories with pagination
 func (s *MemoryService) GetAll(userID string, limit, offset int) ([]models.Memory, error) {
-	return s.memoryRepo.GetAllByUserID(userID, limit, offset)
+	// Note: Caching with limit/offset is complex, so we only cache when limit/offset are default values
+	// For paginated requests, skip cache
+	if limit != 0 || offset != 0 {
+		return s.memoryRepo.GetAllByUserID(userID, limit, offset)
+	}
+
+	// Try to get from cache first (only for non-paginated requests)
+	if s.cacheService != nil {
+		cached, err := s.cacheService.GetCachedUserMemories(userID)
+		if err == nil && cached != nil {
+			return cached, nil
+		}
+	}
+
+	// Cache miss or Redis unavailable - fetch from database
+	memories, err := s.memoryRepo.GetAllByUserID(userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result (async, don't block) - only for non-paginated
+	if s.cacheService != nil && limit == 0 && offset == 0 {
+		go func() {
+			_ = s.cacheService.CacheUserMemories(userID, memories)
+		}()
+	}
+
+	return memories, nil
 }
 
 // GetByID retrieves a single memory

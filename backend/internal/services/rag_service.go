@@ -24,6 +24,7 @@ type RAGService struct {
 	aiService        *AIService
 	aiProviderSvc    *AIProviderService
 	scraperService   *ScraperService
+	cacheService     *CacheService
 }
 
 // RAGConfig holds configuration for the RAG service
@@ -42,6 +43,7 @@ func NewRAGService(
 	aiService *AIService,
 	aiProviderSvc *AIProviderService,
 	scraperService *ScraperService,
+	cacheService *CacheService,
 ) *RAGService {
 	return &RAGService{
 		vectorRepo:       vectorRepo,
@@ -52,6 +54,7 @@ func NewRAGService(
 		aiService:        aiService,
 		aiProviderSvc:    aiProviderSvc,
 		scraperService:   scraperService,
+		cacheService:     cacheService,
 	}
 }
 
@@ -73,6 +76,19 @@ func (s *RAGService) Search(ctx context.Context, userID string, req *models.Sear
 	}
 	if req.VectorWeight <= 0 {
 		req.VectorWeight = 0.7 // Default: favor vector search
+	}
+
+	// Generate cache key
+	cacheKey := fmt.Sprintf("%s:%s:%d:%.2f:%v", userID, req.Query, req.Limit, req.VectorWeight, req.ContentTypes)
+
+	// Try to get from cache first
+	if s.cacheService != nil {
+		var cachedResponse models.SearchResponse
+		err := s.cacheService.GetCachedRAGSearch(cacheKey, &cachedResponse)
+		if err == nil {
+			log.Printf("[RAG] Cache hit for search: user=%s, query=%q", userID, req.Query)
+			return &cachedResponse, nil
+		}
 	}
 
 	log.Printf("[RAG] Hybrid search: user=%s, query=%q, limit=%d, vector_weight=%.2f",
@@ -146,12 +162,21 @@ func (s *RAGService) Search(ctx context.Context, userID string, req *models.Sear
 	// Enrich results with full document data
 	enriched := s.enrichSearchResults(ctx, userID, combined)
 
-	return &models.SearchResponse{
+	response := &models.SearchResponse{
 		Results:    enriched,
 		Query:      req.Query,
 		TotalCount: len(enriched),
 		TimeTaken:  float64(time.Since(startTime).Milliseconds()),
-	}, nil
+	}
+
+	// Cache the result (async, don't block)
+	if s.cacheService != nil {
+		go func() {
+			_ = s.cacheService.CacheRAGSearch(cacheKey, response)
+		}()
+	}
+
+	return response, nil
 }
 
 // reciprocalRankFusion combines results from multiple search methods

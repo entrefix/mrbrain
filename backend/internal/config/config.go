@@ -35,6 +35,17 @@ type Config struct {
 	SupabaseAnonKey       string
 	SupabaseServiceRoleKey string
 	SupabaseJWTSecret      string
+	// Redis settings
+	RedisURL      string
+	RedisPassword string
+	RedisDB       int
+	RedisEnabled  bool
+	// Cache TTL settings
+	CacheTTLTodos      time.Duration
+	CacheTTLMemories   time.Duration
+	CacheTTLAIResponses time.Duration
+	// Rate limiting
+	RateLimitRequestsPerMinute int
 }
 
 func Load() (*Config, error) {
@@ -135,6 +146,48 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Redis settings
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379"
+	}
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+	redisDB := 0
+	if dbStr := os.Getenv("REDIS_DB"); dbStr != "" {
+		if db, err := strconv.Atoi(dbStr); err == nil && db >= 0 {
+			redisDB = db
+		}
+	}
+	redisEnabled := os.Getenv("REDIS_ENABLED") != "false"
+
+	// Cache TTL settings
+	cacheTTLTodos := 5 * time.Minute
+	if ttlStr := os.Getenv("CACHE_TTL_TODOS"); ttlStr != "" {
+		if ttl, err := time.ParseDuration(ttlStr); err == nil && ttl > 0 {
+			cacheTTLTodos = ttl
+		}
+	}
+	cacheTTLMemories := 5 * time.Minute
+	if ttlStr := os.Getenv("CACHE_TTL_MEMORIES"); ttlStr != "" {
+		if ttl, err := time.ParseDuration(ttlStr); err == nil && ttl > 0 {
+			cacheTTLMemories = ttl
+		}
+	}
+	cacheTTLAIResponses := 1 * time.Hour
+	if ttlStr := os.Getenv("CACHE_TTL_AI_RESPONSES"); ttlStr != "" {
+		if ttl, err := time.ParseDuration(ttlStr); err == nil && ttl > 0 {
+			cacheTTLAIResponses = ttl
+		}
+	}
+
+	// Rate limiting
+	rateLimitRPM := 60
+	if rpmStr := os.Getenv("RATE_LIMIT_REQUESTS_PER_MINUTE"); rpmStr != "" {
+		if rpm, err := strconv.Atoi(rpmStr); err == nil && rpm > 0 {
+			rateLimitRPM = rpm
+		}
+	}
+
 	return &Config{
 		Port:                  port,
 		DatabasePath:          dbPath,
@@ -158,5 +211,13 @@ func Load() (*Config, error) {
 		SupabaseAnonKey:       os.Getenv("SUPABASE_ANON_KEY"),
 		SupabaseServiceRoleKey: os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
 		SupabaseJWTSecret:     os.Getenv("SUPABASE_JWT_SECRET"),
+		RedisURL:              redisURL,
+		RedisPassword:         redisPassword,
+		RedisDB:               redisDB,
+		RedisEnabled:          redisEnabled,
+		CacheTTLTodos:         cacheTTLTodos,
+		CacheTTLMemories:      cacheTTLMemories,
+		CacheTTLAIResponses:   cacheTTLAIResponses,
+		RateLimitRequestsPerMinute: rateLimitRPM,
 	}, nil
 }

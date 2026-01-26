@@ -22,6 +22,8 @@ func Setup(
 	uploadJobService *services.UploadJobService,
 	visionService *services.VisionService,
 	chatService *services.ChatService,
+	redisService *services.RedisService,
+	rateLimitRPM int,
 	allowedOrigins []string,
 ) *gin.Engine {
 	r := gin.Default()
@@ -37,7 +39,11 @@ func Setup(
 	r.Use(cors.New(corsConfig))
 
 	// Health check
-	r.GET("/health", handlers.HealthCheck)
+	if redisService != nil {
+		r.GET("/health", handlers.HealthCheckWithRedis(redisService))
+	} else {
+		r.GET("/health", handlers.HealthCheck)
+	}
 
 	// Create handlers
 	authHandler := handlers.NewAuthHandler(userRepo)
@@ -62,6 +68,10 @@ func Setup(
 		// Protected routes
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware(supabaseAuthService))
+		// Add rate limiting if Redis is enabled
+		if redisService != nil && rateLimitRPM > 0 {
+			protected.Use(middleware.RateLimitMiddleware(redisService, rateLimitRPM))
+		}
 		{
 			// Auth - get current user
 			protected.GET("/auth/me", authHandler.Me)

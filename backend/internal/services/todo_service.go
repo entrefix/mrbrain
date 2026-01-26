@@ -17,14 +17,16 @@ type TodoService struct {
 	aiService         *AIService
 	aiProviderService *AIProviderService
 	ragService        *RAGService
+	cacheService      *CacheService
 }
 
-func NewTodoService(todoRepo *repository.TodoRepository, aiService *AIService, aiProviderService *AIProviderService, ragService *RAGService) *TodoService {
+func NewTodoService(todoRepo *repository.TodoRepository, aiService *AIService, aiProviderService *AIProviderService, ragService *RAGService, cacheService *CacheService) *TodoService {
 	return &TodoService{
 		todoRepo:          todoRepo,
 		aiService:         aiService,
 		aiProviderService: aiProviderService,
 		ragService:        ragService,
+		cacheService:      cacheService,
 	}
 }
 
@@ -111,6 +113,11 @@ func (s *TodoService) Create(userID string, req *models.TodoCreateRequest) (*mod
 				log.Printf("[TodoService] Failed to index todo %s: %v", t.ID, err)
 			}
 		}(todo)
+	}
+
+	// Invalidate cache
+	if s.cacheService != nil {
+		_ = s.cacheService.InvalidateUserTodos(userID)
 	}
 
 	return todo, nil
@@ -252,6 +259,12 @@ func (s *TodoService) CreateFromChat(userID string, req *models.TodoCreateFromCh
 	}
 
 	log.Printf("[TodoService] Created todo from chat %s: %q", todo.ID, todo.Title)
+
+	// Invalidate cache
+	if s.cacheService != nil {
+		_ = s.cacheService.InvalidateUserTodos(userID)
+	}
+
 	return todo, nil
 }
 
@@ -390,7 +403,28 @@ func nextWeekday(from time.Time, weekday time.Weekday) time.Time {
 }
 
 func (s *TodoService) GetAll(userID string) ([]models.Todo, error) {
-	return s.todoRepo.GetAllByUserID(userID)
+	// Try to get from cache first
+	if s.cacheService != nil {
+		cached, err := s.cacheService.GetCachedUserTodos(userID)
+		if err == nil && cached != nil {
+			return cached, nil
+		}
+	}
+
+	// Cache miss or Redis unavailable - fetch from database
+	todos, err := s.todoRepo.GetAllByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result (async, don't block)
+	if s.cacheService != nil {
+		go func() {
+			_ = s.cacheService.CacheUserTodos(userID, todos)
+		}()
+	}
+
+	return todos, nil
 }
 
 func (s *TodoService) GetByID(userID, todoID string) (*models.Todo, error) {
@@ -463,6 +497,11 @@ func (s *TodoService) Update(userID, todoID string, req *models.TodoUpdateReques
 		}(updatedTodo)
 	}
 
+	// Invalidate cache
+	if s.cacheService != nil {
+		_ = s.cacheService.InvalidateUserTodos(userID)
+	}
+
 	return updatedTodo, nil
 }
 
@@ -487,7 +526,16 @@ func (s *TodoService) Delete(userID, todoID string) error {
 		}(todoID)
 	}
 
-	return s.todoRepo.Delete(todoID)
+	if err := s.todoRepo.Delete(todoID); err != nil {
+		return err
+	}
+
+	// Invalidate cache
+	if s.cacheService != nil {
+		_ = s.cacheService.InvalidateUserTodos(userID)
+	}
+
+	return nil
 }
 
 func (s *TodoService) Reorder(userID string, req *models.TodoReorderRequest) error {

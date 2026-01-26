@@ -6,6 +6,7 @@ import (
 	"github.com/todomyday/backend/internal/config"
 	"github.com/todomyday/backend/internal/crypto"
 	"github.com/todomyday/backend/internal/database"
+	"github.com/todomyday/backend/internal/redis"
 	"github.com/todomyday/backend/internal/repository"
 	"github.com/todomyday/backend/internal/router"
 	"github.com/todomyday/backend/internal/services"
@@ -79,6 +80,25 @@ func main() {
 	log.Println("Database health checks complete")
 	// === End Health Checks ===
 
+	// Initialize Redis client
+	var redisClient *redis.Client
+	if cfg.RedisEnabled {
+		rdb, err := redis.NewClient(redis.Config{
+			URL:      cfg.RedisURL,
+			Password: cfg.RedisPassword,
+			DB:       cfg.RedisDB,
+			Enabled:  cfg.RedisEnabled,
+		})
+		if err != nil {
+			log.Printf("Warning: Failed to connect to Redis: %v (continuing without Redis)", err)
+		} else {
+			redisClient = rdb
+			log.Println("✅ Redis client initialized")
+		}
+	} else {
+		log.Println("Redis is disabled")
+	}
+
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	todoRepo := repository.NewTodoRepository(db)
@@ -98,6 +118,20 @@ func main() {
 		cfg.SupabaseAnonKey,
 		cfg.SupabaseServiceRoleKey,
 	)
+
+	// Initialize Redis service and cache service
+	var redisService *services.RedisService
+	var cacheService *services.CacheService
+	if redisClient != nil {
+		redisService = services.NewRedisService(redisClient)
+		cacheService = services.NewCacheService(
+			redisService,
+			cfg.CacheTTLTodos,
+			cfg.CacheTTLMemories,
+			cfg.CacheTTLAIResponses,
+		)
+		log.Println("✅ Cache service initialized")
+	}
 
 	// Initialize core services
 	aiService := services.NewAIService(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.OpenAIModel)
@@ -167,6 +201,7 @@ func main() {
 				aiService,
 				aiProviderService,
 				scraperService,
+				cacheService,
 			)
 			log.Printf("RAG service initialized with NIM embedding model: %s (dim=%d, rpm=%d)",
 				cfg.NIMModel, cfg.NIMEmbeddingDim, cfg.NIMRPMLimit)
@@ -175,9 +210,9 @@ func main() {
 		log.Println("RAG service not enabled - set NIM_API_KEY to enable")
 	}
 
-	// Initialize todo and memory services (with RAG integration)
-	todoService := services.NewTodoService(todoRepo, aiService, aiProviderService, ragService)
-	memoryService := services.NewMemoryService(memoryRepo, todoRepo, aiService, aiProviderService, scraperService, ragService)
+	// Initialize todo and memory services (with RAG integration and caching)
+	todoService := services.NewTodoService(todoRepo, aiService, aiProviderService, ragService, cacheService)
+	memoryService := services.NewMemoryService(memoryRepo, todoRepo, aiService, aiProviderService, scraperService, ragService, cacheService)
 
 	// Initialize user data service (for data management)
 	userDataService := services.NewUserDataService(memoryRepo, todoRepo, groupRepo, vectorRepo, ragService)
@@ -200,7 +235,7 @@ func main() {
 	chatService := services.NewChatService(chatRepo)
 
 	// Setup router
-	r := router.Setup(supabaseAuthService, userRepo, todoService, groupService, aiProviderService, memoryService, ragService, userDataService, fileParserService, uploadJobService, visionService, chatService, cfg.AllowedOrigins)
+	r := router.Setup(supabaseAuthService, userRepo, todoService, groupService, aiProviderService, memoryService, ragService, userDataService, fileParserService, uploadJobService, visionService, chatService, redisService, cfg.RateLimitRequestsPerMinute, cfg.AllowedOrigins)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)

@@ -29,6 +29,11 @@ export const memoryApi = {
     return response.data.memory;
   },
 
+  createFromChat: async (data: { content: string; category?: string; summary?: string }): Promise<Memory> => {
+    const response = await client.post('/memories/from-chat', data);
+    return response.data.memory;
+  },
+
   update: async (id: string, data: MemoryUpdate): Promise<Memory> => {
     const response = await client.put(`/memories/${id}`, data);
     return response.data.memory;

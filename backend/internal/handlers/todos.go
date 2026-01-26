@@ -53,6 +53,27 @@ func (h *TodoHandler) Create(c *gin.Context) {
 	})
 }
 
+// CreateFromChat creates a new todo from chat interface
+func (h *TodoHandler) CreateFromChat(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	var req models.TodoCreateFromChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	todo, err := h.todoService.CreateFromChat(userID, &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create todo from chat"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"todo": todo,
+	})
+}
+
 func (h *TodoHandler) GetByID(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	todoID := c.Param("id")

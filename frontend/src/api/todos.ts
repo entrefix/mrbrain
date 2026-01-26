@@ -24,6 +24,18 @@ export const todoApi = {
     return response.data.todo;
   },
 
+  createFromChat: async (data: {
+    content: string;
+    title?: string;
+    description?: string;
+    due_date?: string;
+    priority?: 'low' | 'medium' | 'high';
+    group_id?: string;
+  }): Promise<Todo> => {
+    const response = await client.post('/todos/from-chat', data);
+    return response.data.todo;
+  },
+
   update: async (id: string, data: TodoUpdate): Promise<Todo> => {
     const response = await client.put(`/todos/${id}`, data);
     return response.data.todo;

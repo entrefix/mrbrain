@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
+import { trackEvent } from '../utils/analytics';
 
 type Theme = 'light' | 'dark';
 
@@ -21,7 +22,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [theme]);
 
   const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+    setTheme(prev => {
+      const newTheme = prev === 'light' ? 'dark' : 'light';
+      trackEvent('theme_changed', { theme: newTheme });
+      return newTheme;
+    });
   };
 
   return (

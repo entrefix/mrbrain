@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { memoryApi, todoApi, ragApi, aiProviderApi, userDataApi, chatApi } from '../api';
 import type { Memory, Todo, RAGAskResponse, RAGSearchResult, UploadJobStatusResponse, AskMode } from '../types';
 import type { AIProvider, AIProviderModel, AIProviderCreate, DataStats } from '../api';
+import { trackEvent } from '../utils/analytics';
 import UnifiedGrid from '../components/UnifiedGrid';
 import UnifiedList from '../components/UnifiedList';
 import CreateNoteModal from '../components/CreateNoteModal';
@@ -235,6 +236,7 @@ export default function Unified() {
           url_title: null,
           url_content: null,
           is_archived: false,
+          position: '0',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           isProcessing: true,
@@ -248,6 +250,12 @@ export default function Unified() {
         
         // Replace pending with real item
         setMemories((prev) => prev.map((m) => m.id === tempId ? newMemory : m));
+
+        // Track analytics
+        trackEvent('memory_created', {
+          has_category: newMemory.category !== 'Uncategorized',
+          category: newMemory.category,
+        });
 
         // Auto-clear Ask AI results when adding new memory (if there's an active search)
         if (askMessages.length > 0) {
@@ -287,6 +295,14 @@ export default function Unified() {
         
         // Replace pending with real item
         setTodos((prev) => prev.map((t) => t.id === tempId ? newTodo : t));
+        
+        // Track analytics
+        trackEvent('todo_created', {
+          has_due_date: !!newTodo.due_date,
+          has_group: !!newTodo.group_id,
+          priority: newTodo.priority || 'medium',
+        });
+        
         toast.success('Todo created');
       }
     } catch (error) {
@@ -482,8 +498,50 @@ export default function Unified() {
     }
   };
 
+  // Parse command from query (only slash commands: /save, /memory, /todo, /task)
+  const parseCommand = (query: string): { command: 'memory' | 'todo' | null; content: string } => {
+    const trimmed = query.trim();
+    
+    // Memory commands - Slash commands only
+    if (trimmed.startsWith('/save ') || trimmed.startsWith('/memory ') || trimmed.startsWith('/remember ') || trimmed.startsWith('/note ')) {
+      return { command: 'memory', content: trimmed.replace(/^\/save\s+|\/memory\s+|\/remember\s+|\/note\s+/, '').trim() };
+    }
+    
+    // Todo commands - Slash commands
+    if (trimmed.startsWith('/todo ') || trimmed.startsWith('/task ') || trimmed.startsWith('/add ')) {
+      return { command: 'todo', content: trimmed.replace(/^\/todo\s+|\/task\s+|\/add\s+/, '').trim() };
+    }
+    
+    // No command detected - will proceed with RAG query
+    return { command: null, content: query };
+  };
+
   // Submit query to Ask AI
   const submitQuery = async (query: string, skipUserMessage: boolean = false) => {
+    // Check for save commands first - BEFORE any RAG processing
+    const { command, content } = parseCommand(query);
+    
+    // Debug logging in development
+    if (import.meta.env.DEV) {
+      console.log('[Command Parser] Query:', query);
+      console.log('[Command Parser] Detected command:', command);
+      console.log('[Command Parser] Extracted content:', content);
+    }
+    
+    if (command === 'memory' && content) {
+      // Save as memory directly
+      console.log('[Command Parser] Saving as memory:', content);
+      await handleSaveAsMemory(content);
+      return; // Don't proceed with RAG query
+    }
+    
+    if (command === 'todo' && content) {
+      // Save as todo directly
+      console.log('[Command Parser] Saving as todo:', content);
+      await handleSaveAsTodo(content);
+      return; // Don't proceed with RAG query
+    }
+    
     // Clear citations when starting a NEW query
     if (!skipUserMessage) {
       setMemoryCitations([]);
@@ -559,6 +617,12 @@ export default function Unified() {
     setIsAskLoading(true);
 
     try {
+      // Track chat query
+    trackEvent('chat_query_submitted', {
+        mode: askMode,
+        has_conversation_history: askMessages.length > 0,
+      });
+
       const response: RAGAskResponse = await ragApi.ask({
         question: query,
         max_context: 5,
@@ -648,6 +712,63 @@ export default function Unified() {
     
     // Resubmit the query without adding a new user message
     submitQuery(lastQuery, true);
+  };
+
+  // Handle save as memory from chat
+  const handleSaveAsMemory = async (content: string) => {
+    if (!content.trim()) {
+      toast.error('No content to save');
+      return;
+    }
+
+    try {
+      const newMemory = await memoryApi.createFromChat({
+        content: content.trim(),
+      });
+      
+      // Add to memories list
+      setMemories((prev) => [newMemory, ...prev]);
+      
+      // Track analytics
+      trackEvent('memory_saved_from_chat', {
+        has_category: newMemory.category !== 'Uncategorized',
+        category: newMemory.category,
+      });
+      
+      toast.success('Saved as memory');
+    } catch (error) {
+      console.error('Failed to save memory from chat:', error);
+      toast.error('Failed to save as memory');
+    }
+  };
+
+  // Handle save as todo from chat
+  const handleSaveAsTodo = async (content: string) => {
+    if (!content.trim()) {
+      toast.error('No content to save');
+      return;
+    }
+
+    try {
+      const newTodo = await todoApi.createFromChat({
+        content: content.trim(),
+      });
+      
+      // Add to todos list
+      setTodos((prev) => [...prev, newTodo]);
+      
+      // Track analytics
+      trackEvent('todo_saved_from_chat', {
+        has_due_date: !!newTodo.due_date,
+        has_group: !!newTodo.group_id,
+        priority: newTodo.priority || 'medium',
+      });
+      
+      toast.success('Saved as todo');
+    } catch (error) {
+      console.error('Failed to save todo from chat:', error);
+      toast.error('Failed to save as todo');
+    }
   };
 
   // Handle item click
@@ -1171,6 +1292,8 @@ export default function Unified() {
               onInputChange={setAskInputValue}
               onSubmit={handleAskSubmit}
               onRegenerate={handleRegenerateQuery}
+              onSaveAsMemory={handleSaveAsMemory}
+              onSaveAsTodo={handleSaveAsTodo}
               onClear={async () => {
                 // Delete current thread and create a new one
                 if (currentThreadId) {

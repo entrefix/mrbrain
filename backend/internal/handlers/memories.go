@@ -69,6 +69,27 @@ func (h *MemoryHandler) Create(c *gin.Context) {
 	})
 }
 
+// CreateFromChat creates a new memory from chat interface
+func (h *MemoryHandler) CreateFromChat(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	var req models.MemoryCreateFromChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	memory, err := h.memoryService.CreateFromChat(userID, &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create memory from chat"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"memory": memory,
+	})
+}
+
 // GetByID returns a single memory
 func (h *MemoryHandler) GetByID(c *gin.Context) {
 	userID := middleware.GetUserID(c)

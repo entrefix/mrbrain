@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { authApi } from '../api';
 import { User } from '../types';
 import type { AuthError, Session } from '@supabase/supabase-js';
+import { identifyUser, resetUser, trackEvent } from '../utils/analytics';
 
 interface AuthContextType {
   user: User | null;
@@ -26,11 +27,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const backendUser = await authApi.me();
       setUser(backendUser);
+      // Identify user in PostHog
+      if (backendUser) {
+        identifyUser(backendUser.id, {
+          email: backendUser.email,
+          full_name: backendUser.full_name,
+        });
+      }
     } catch (error: any) {
       console.error('Failed to sync user from backend:', error);
       // If we get a 401, the session is invalid - clear user
       if (error?.response?.status === 401) {
         setUser(null);
+        resetUser(); // Reset PostHog user identification
       }
       // For other errors, don't clear user (might be network issue)
       // Don't throw - handled internally
@@ -84,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (error) {
+      trackEvent('login_failed', { error: error.message });
       throw error;
     }
 
@@ -91,6 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // But we can also sync immediately for better UX
     if (data.session) {
       await syncUserFromBackend();
+      trackEvent('user_logged_in', { method: 'email' });
     }
   };
 
@@ -101,16 +112,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (error) {
+      trackEvent('registration_failed', { error: error.message });
       throw error;
     }
 
     // If email confirmation is disabled, user is immediately signed in
     if (data.session) {
       await syncUserFromBackend();
+      trackEvent('user_registered', { method: 'email' });
+    } else {
+      trackEvent('user_registered', { method: 'email', requires_confirmation: true });
     }
   };
 
   const signInWithGoogle = async () => {
+    trackEvent('login_initiated', { method: 'google' });
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -119,6 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (error) {
+      trackEvent('login_failed', { method: 'google', error: error.message });
       throw error;
     }
   };
@@ -129,6 +146,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw error;
     }
     setUser(null);
+    resetUser(); // Reset PostHog user identification
+    trackEvent('user_logged_out');
   };
 
   const resetPassword = async (email: string) => {

@@ -10,6 +10,7 @@ import AIProviderCard from '../components/AIProviderCard';
 import AIProviderForm from '../components/AIProviderForm';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { supabase } from '../lib/supabase';
+import { trackEvent } from '../utils/analytics';
 
 export default function Settings() {
   const [emailNotifications, setEmailNotifications] = useState(true);
@@ -98,6 +99,10 @@ export default function Settings() {
     try {
       const newProvider = await aiProviderApi.create(data);
       setProviders(prev => [...prev, newProvider]);
+      trackEvent('ai_provider_created', {
+        provider_type: data.provider_type,
+        is_default: data.is_default || false,
+      });
       setShowProviderForm(false);
       toast.success('AI provider added successfully');
 
@@ -127,6 +132,10 @@ export default function Settings() {
 
       setProviders(prev => prev.map(p => p.id === updated.id ? updated : p));
       setEditingProvider(null);
+      trackEvent('ai_provider_updated', {
+        provider_type: updated.provider_type,
+        is_default: updated.is_default,
+      });
       toast.success('AI provider updated successfully');
     } catch (error) {
       toast.error('Failed to update AI provider');
@@ -136,8 +145,14 @@ export default function Settings() {
 
   const handleDeleteProvider = async (id: string) => {
     try {
+      const provider = providers.find(p => p.id === id);
       await aiProviderApi.delete(id);
       setProviders(prev => prev.filter(p => p.id !== id));
+      if (provider) {
+        trackEvent('ai_provider_deleted', {
+          provider_type: provider.provider_type,
+        });
+      }
       toast.success('AI provider deleted');
     } catch (error) {
       toast.error('Failed to delete AI provider');
@@ -161,6 +176,10 @@ export default function Settings() {
     try {
       const updated = await aiProviderApi.update(providerId, { selected_model: modelId });
       setProviders(prev => prev.map(p => p.id === updated.id ? updated : p));
+      trackEvent('ai_model_selected', {
+        provider_type: updated.provider_type,
+        model_id: modelId,
+      });
       toast.success('Model selected');
     } catch (error) {
       toast.error('Failed to select model');

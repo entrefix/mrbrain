@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
+import { trackEvent } from '../utils/analytics';
 import {
   SquaresFour,
   List,
@@ -185,6 +186,13 @@ export default function Memories() {
       // 3. Remove pending, add real memory at top
       setPendingMemories((prev) => prev.filter((p) => p.tempId !== tempId));
       setMemories((prev) => [newMemory, ...prev]);
+      
+      // Track analytics
+      trackEvent('memory_created', {
+        has_category: newMemory.category !== 'Uncategorized',
+        category: newMemory.category,
+      });
+      
       // Refresh stats in background (non-blocking)
       memoryApi.getStats().then(setStats);
     } catch (error) {

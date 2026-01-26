@@ -16,6 +16,8 @@ import {
   Plus,
   Globe,
   Intersect,
+  BookmarkSimple,
+  CheckSquare,
 } from '@phosphor-icons/react';
 import type { RAGAskResponse, RAGSearchResult, AskMode } from '../types';
 
@@ -48,9 +50,11 @@ interface AskAIResultsProps {
   onSubmit: (e: React.FormEvent) => void;
   onRegenerate?: (lastQuery: string) => void;
   onClear?: () => void;
-  onCitationsExtracted?: (citations: RAGAskResponse['sources']) => void;
+  onCitationsExtracted?: (citations: RAGAskResponse['sources']) => void; // eslint-disable-line @typescript-eslint/no-unused-vars
   mode: AskMode;
   onModeChange: (mode: AskMode) => void;
+  onSaveAsMemory?: (content: string) => void;
+  onSaveAsTodo?: (content: string) => void;
 }
 
 // Modal for expanded card content
@@ -60,6 +64,8 @@ interface ExpandedCardModalProps {
   onCopy: (text: string) => void;
   onRegenerate: (question: string) => void;
   isLoading: boolean;
+  onSaveAsMemory?: (content: string) => void;
+  onSaveAsTodo?: (content: string) => void;
 }
 
 // Mode configuration with colors
@@ -139,7 +145,7 @@ const getModeIcon = (mode: AskMode, size: number = 20) => {
 };
 
 // Expanded Card Modal Component
-function ExpandedCardModal({ card, onClose, onCopy, onRegenerate, isLoading }: ExpandedCardModalProps) {
+function ExpandedCardModal({ card, onClose, onCopy, onRegenerate, isLoading, onSaveAsMemory, onSaveAsTodo }: ExpandedCardModalProps) {
   if (!card) return null;
 
   return (
@@ -248,31 +254,59 @@ function ExpandedCardModal({ card, onClose, onCopy, onRegenerate, isLoading }: E
         </div>
 
         {/* Modal Footer - Actions */}
-        <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-end gap-2">
-          <button
-            onClick={() => onCopy(card.answer || '')}
-            className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1.5"
-          >
-            <Copy size={14} weight="regular" />
-            Copy
-          </button>
-          <button
-            onClick={() => {
-              onRegenerate(card.question);
-              onClose();
-            }}
-            disabled={isLoading}
-            className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
-          >
-            <ArrowsClockwise size={14} weight="regular" />
-            Regenerate
-          </button>
-          <button
-            onClick={onClose}
-            className={`px-3 py-1.5 text-sm text-white rounded-lg transition-colors ${modeColors[card.mode].button} ${modeColors[card.mode].buttonHover}`}
-          >
-            Close
-          </button>
+        <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {onSaveAsMemory && (
+              <button
+                onClick={() => {
+                  onSaveAsMemory(card.answer || '');
+                  onClose();
+                }}
+                className="px-3 py-1.5 text-sm text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/30 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <BookmarkSimple size={14} weight="regular" />
+                Save as Memory
+              </button>
+            )}
+            {onSaveAsTodo && (
+              <button
+                onClick={() => {
+                  onSaveAsTodo(card.answer || '');
+                  onClose();
+                }}
+                className="px-3 py-1.5 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <CheckSquare size={14} weight="regular" />
+                Save as Todo
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onCopy(card.answer || '')}
+              className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1.5"
+            >
+              <Copy size={14} weight="regular" />
+              Copy
+            </button>
+            <button
+              onClick={() => {
+                onRegenerate(card.question);
+                onClose();
+              }}
+              disabled={isLoading}
+              className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <ArrowsClockwise size={14} weight="regular" />
+              Regenerate
+            </button>
+            <button
+              onClick={onClose}
+              className={`px-3 py-1.5 text-sm text-white rounded-lg transition-colors ${modeColors[card.mode].button} ${modeColors[card.mode].buttonHover}`}
+            >
+              Close
+            </button>
+          </div>
         </div>
       </motion.div>
     </motion.div>
@@ -290,6 +324,8 @@ export default function AskAIResults({
   onCitationsExtracted,
   mode,
   onModeChange,
+  onSaveAsMemory,
+  onSaveAsTodo,
 }: AskAIResultsProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [activeCardIndex, setActiveCardIndex] = useState(0);
@@ -297,6 +333,12 @@ export default function AskAIResults({
   const [isMinimized, setIsMinimized] = useState(false);
   const [showModeDropup, setShowModeDropup] = useState(false);
   const modeButtonRef = useRef<HTMLButtonElement>(null);
+  
+  // Command autocomplete state
+  const [showCommands, setShowCommands] = useState(false);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const [commandQuery, setCommandQuery] = useState('');
+  const commandsRef = useRef<HTMLDivElement>(null);
 
   // Convert messages to cards (pair user questions with AI answers)
   const cards: CardData[] = [];
@@ -430,13 +472,81 @@ export default function AskAIResults({
 
   // Handle Tab key to cycle modes when input is focused
   // Handle Enter to submit, Shift+Enter for new line
+  // Available commands
+  const availableCommands = [
+    { command: '/save', description: 'Save as memory', category: 'Memory' },
+    { command: '/memory', description: 'Save as memory', category: 'Memory' },
+    { command: '/remember', description: 'Save as memory', category: 'Memory' },
+    { command: '/note', description: 'Save as memory', category: 'Memory' },
+    { command: '/todo', description: 'Create a todo', category: 'Todo' },
+    { command: '/task', description: 'Create a todo', category: 'Todo' },
+    { command: '/add', description: 'Create a todo', category: 'Todo' },
+  ];
+
+  // Filter commands based on query
+  const filteredCommands = availableCommands.filter(cmd => 
+    cmd.command.toLowerCase().includes(commandQuery.toLowerCase()) ||
+    cmd.description.toLowerCase().includes(commandQuery.toLowerCase())
+  );
+
+  // Detect "/" and show commands
+  useEffect(() => {
+    const cursorPos = inputRef.current?.selectionStart || 0;
+    const textBeforeCursor = inputValue.substring(0, cursorPos);
+    const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+    const textAfterSlash = textBeforeCursor.substring(lastSlashIndex + 1);
+    
+    // Check if we're in a command context (no space after /)
+    if (lastSlashIndex >= 0 && !textAfterSlash.includes(' ')) {
+      setShowCommands(true);
+      setCommandQuery(textAfterSlash);
+      setSelectedCommandIndex(0);
+    } else {
+      setShowCommands(false);
+      setCommandQuery('');
+    }
+  }, [inputValue]);
+
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab' && !e.shiftKey) {
+    // Handle command autocomplete navigation
+    if (showCommands && filteredCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedCommandIndex((prev) => (prev + 1) % filteredCommands.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedCommandIndex((prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length);
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const selectedCmd = filteredCommands[selectedCommandIndex];
+        if (selectedCmd) {
+          const cursorPos = inputRef.current?.selectionStart || 0;
+          const textBeforeCursor = inputValue.substring(0, cursorPos);
+          const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+          const textAfterCursor = inputValue.substring(cursorPos);
+          const newValue = inputValue.substring(0, lastSlashIndex) + selectedCmd.command + ' ' + textAfterCursor;
+          onInputChange(newValue);
+          setShowCommands(false);
+          // Set cursor position after the command
+          setTimeout(() => {
+            const newCursorPos = lastSlashIndex + selectedCmd.command.length + 1;
+            inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
+          }, 0);
+        }
+        return;
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowCommands(false);
+        return;
+      }
+    }
+
+    if (e.key === 'Tab' && !e.shiftKey && !showCommands) {
       e.preventDefault();
       const currentIndex = modes.findIndex(m => m.id === mode);
       const nextIndex = (currentIndex + 1) % modes.length;
       onModeChange(modes[nextIndex].id);
-    } else if (e.key === 'Enter' && !e.shiftKey) {
+    } else if (e.key === 'Enter' && !e.shiftKey && !showCommands) {
       // Enter submits the form
       e.preventDefault();
       if (inputValue.trim() && !isLoading) {
@@ -452,13 +562,18 @@ export default function AskAIResults({
       if (modeButtonRef.current && !modeButtonRef.current.contains(e.target as Node)) {
         setShowModeDropup(false);
       }
+      // Close command menu when clicking outside
+      if (commandsRef.current && !commandsRef.current.contains(e.target as Node) && 
+          inputRef.current && !inputRef.current.contains(e.target as Node)) {
+        setShowCommands(false);
+      }
     };
 
-    if (showModeDropup) {
+    if (showModeDropup || showCommands) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showModeDropup]);
+  }, [showModeDropup, showCommands]);
 
   return (
     <div className="p-3 sm:p-6">
@@ -643,6 +758,30 @@ export default function AskAIResults({
                               )}
                             </div>
                             <div className="flex items-center gap-1">
+                              {onSaveAsMemory && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSaveAsMemory(card.answer || '');
+                                  }}
+                                  className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                                  title="Save as Memory"
+                                >
+                                  <BookmarkSimple size={14} weight="regular" />
+                                </button>
+                              )}
+                              {onSaveAsTodo && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSaveAsTodo(card.answer || '');
+                                  }}
+                                  className="p-1.5 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                                  title="Save as Todo"
+                                >
+                                  <CheckSquare size={14} weight="regular" />
+                                </button>
+                              )}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -766,23 +905,26 @@ export default function AskAIResults({
                   </AnimatePresence>
                 </div>
 
-                <textarea
+                <div className="flex-1 relative min-w-0">
+                  <textarea
                   ref={inputRef}
                   value={inputValue}
                   onChange={(e) => onInputChange(e.target.value)}
                   onKeyDown={handleInputKeyDown}
-                  placeholder={
-                    mode === 'memories' ? 'Ask about your memories ...' :
-                    mode === 'internet' ? 'Search the web...' :
-                    mode === 'hybrid' ? 'Search memories and the web...' :
-                    'Ask anything...'
-                  }
+                    placeholder={
+                      mode === 'memories' ? 'Ask about your memories...' :
+                      mode === 'internet' ? 'Search the web...' :
+                      mode === 'hybrid' ? 'Search memories and the web...' :
+                      'Ask anything...'
+                    }
                   disabled={isLoading}
                   rows={1}
                   className="flex-1 bg-transparent border-none outline-none text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 text-sm resize-none overflow-hidden"
                   style={{
                     minHeight: '24px',
                     maxHeight: '120px',
+                    textWrap: 'nowrap',
+                    width: '-webkit-fill-available',
                   }}
                   onInput={(e) => {
                     const target = e.target as HTMLTextAreaElement;
@@ -790,6 +932,59 @@ export default function AskAIResults({
                     target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
                   }}
                 />
+                
+                {/* Command autocomplete dropdown */}
+                <AnimatePresence>
+                  {showCommands && filteredCommands.length > 0 && (
+                    <motion.div
+                      ref={commandsRef}
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute bottom-full left-0 mb-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden z-50"
+                    >
+                      <div className="max-h-64 overflow-y-auto">
+                        {filteredCommands.map((cmd, index) => (
+                          <button
+                            key={cmd.command}
+                            type="button"
+                            onClick={() => {
+                              const cursorPos = inputRef.current?.selectionStart || 0;
+                              const textBeforeCursor = inputValue.substring(0, cursorPos);
+                              const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+                              const textAfterCursor = inputValue.substring(cursorPos);
+                              const newValue = inputValue.substring(0, lastSlashIndex) + cmd.command + ' ' + textAfterCursor;
+                              onInputChange(newValue);
+                              setShowCommands(false);
+                              setTimeout(() => {
+                                const newCursorPos = lastSlashIndex + cmd.command.length + 1;
+                                inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
+                                inputRef.current?.focus();
+                              }, 0);
+                            }}
+                            className={`w-full px-3 py-2 text-left flex items-center gap-2 transition-colors ${
+                              index === selectedCommandIndex
+                                ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300'
+                                : 'hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300'
+                            }`}
+                          >
+                            <span className="font-mono text-sm font-medium">{cmd.command}</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400 flex-1">{cmd.description}</span>
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+                              {cmd.category}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="px-3 py-2 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-700">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          Use ↑↓ to navigate, Enter/Tab to select, Esc to close
+                        </span>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
                 <button
                   type="submit"
                   disabled={!inputValue.trim() || isLoading}
@@ -816,6 +1011,8 @@ export default function AskAIResults({
             onCopy={handleCopy}
             onRegenerate={handleRegenerate}
             isLoading={isLoading}
+            onSaveAsMemory={onSaveAsMemory}
+            onSaveAsTodo={onSaveAsTodo}
           />
         )}
       </AnimatePresence>

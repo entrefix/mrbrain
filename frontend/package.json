@@ -15,6 +15,7 @@
     "axios": "^1.7.0",
     "date-fns": "^3.3.1",
     "framer-motion": "^11.0.8",
+    "posthog-js": "^1.335.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.4.1",

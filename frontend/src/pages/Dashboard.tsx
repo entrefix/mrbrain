@@ -143,6 +143,13 @@ export default function Dashboard() {
       setNewlyCreatedId(newTodo.id);
       setTodos(prev => [...prev, newTodo]);
 
+      // Track analytics
+      trackEvent('todo_created', {
+        has_due_date: !!todo.due_date,
+        has_group: !!todo.group_id,
+        priority: todo.priority || 'medium',
+      });
+
       // 4. Clear animation marker after animation completes
       setTimeout(() => setNewlyCreatedId(null), 1500);
     } catch (error) {
@@ -158,6 +165,7 @@ export default function Dashboard() {
       setTodos(todos.map(todo =>
         todo.id === id ? { ...todo, status } : todo
       ));
+      trackEvent('todo_status_changed', { status });
       toast.success(`Todo marked as ${status}`);
     } catch (error) {
       toast.error('Failed to update todo status');

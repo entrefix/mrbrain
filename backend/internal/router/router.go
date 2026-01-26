@@ -69,6 +69,7 @@ func Setup(
 			// Todos
 			protected.GET("/todos", todoHandler.GetAll)
 			protected.POST("/todos", todoHandler.Create)
+			protected.POST("/todos/from-chat", todoHandler.CreateFromChat)
 			protected.GET("/todos/:id", todoHandler.GetByID)
 			protected.PUT("/todos/:id", todoHandler.Update)
 			protected.DELETE("/todos/:id", todoHandler.Delete)
@@ -94,6 +95,7 @@ func Setup(
 			// Memories
 			protected.GET("/memories", memoryHandler.GetAll)
 			protected.POST("/memories", memoryHandler.Create)
+			protected.POST("/memories/from-chat", memoryHandler.CreateFromChat)
 			protected.POST("/memories/upload", memoryHandler.UploadMemoryFile)
 			protected.POST("/memories/upload-image", memoryHandler.UploadImage)
 			protected.GET("/memories/upload/jobs/:job_id", memoryHandler.GetUploadJobStatus)

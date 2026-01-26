@@ -40,6 +40,12 @@ type MemoryCreateRequest struct {
 	Content string `json:"content" binding:"required"`
 }
 
+type MemoryCreateFromChatRequest struct {
+	Content  string  `json:"content" binding:"required"`
+	Category *string `json:"category"`
+	Summary  *string `json:"summary"`
+}
+
 type MemoryUpdateRequest struct {
 	Content    *string `json:"content"`
 	Category   *string `json:"category"`

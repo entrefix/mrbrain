@@ -4,6 +4,8 @@ export { groupApi } from './groups';
 export { memoryApi } from './memories';
 export { ragApi } from './rag';
 export { default as aiProviderApi } from './aiProviders';
+export { default as calendarApi } from './calendar';
+export type { CalendarStatus } from './calendar';
 export { userDataApi } from './userData';
 export { chatApi } from './chat';
 export type { LoginRequest, RegisterRequest } from './auth';

@@ -46,6 +46,10 @@ type Config struct {
 	CacheTTLAIResponses time.Duration
 	// Rate limiting
 	RateLimitRequestsPerMinute int
+	// Google Calendar OAuth settings
+	GoogleCalendarClientID     string
+	GoogleCalendarClientSecret string
+	GoogleCalendarRedirectURI  string
 }
 
 func Load() (*Config, error) {
@@ -188,6 +192,14 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Google Calendar OAuth settings
+	googleCalendarClientID := os.Getenv("GOOGLE_CALENDAR_CLIENT_ID")
+	googleCalendarClientSecret := os.Getenv("GOOGLE_CALENDAR_CLIENT_SECRET")
+	googleCalendarRedirectURI := os.Getenv("GOOGLE_CALENDAR_REDIRECT_URI")
+	if googleCalendarRedirectURI == "" {
+		googleCalendarRedirectURI = "http://localhost:3111/auth/calendar/callback"
+	}
+
 	return &Config{
 		Port:                  port,
 		DatabasePath:          dbPath,
@@ -219,5 +231,8 @@ func Load() (*Config, error) {
 		CacheTTLMemories:      cacheTTLMemories,
 		CacheTTLAIResponses:   cacheTTLAIResponses,
 		RateLimitRequestsPerMinute: rateLimitRPM,
+		GoogleCalendarClientID:     googleCalendarClientID,
+		GoogleCalendarClientSecret: googleCalendarClientSecret,
+		GoogleCalendarRedirectURI:  googleCalendarRedirectURI,
 	}, nil
 }

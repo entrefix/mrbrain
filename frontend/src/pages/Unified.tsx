@@ -123,10 +123,19 @@ export default function Unified() {
   const loadChatThread = async () => {
     try {
       const response = await chatApi.getActiveThread();
+      
+      // Check if response and thread exist
+      if (!response || !response.thread) {
+        console.log('No active thread found');
+        return;
+      }
+      
       setCurrentThreadId(response.thread.id);
       
       // Convert backend messages to frontend Message format
-      const loadedMessages: Message[] = response.messages.map((msg) => ({
+      // Handle case where messages might be null or undefined
+      const messages = response.messages || [];
+      const loadedMessages: Message[] = messages.map((msg) => ({
         id: msg.id,
         type: msg.role as 'user' | 'assistant',
         content: msg.content,

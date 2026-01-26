@@ -165,6 +165,22 @@ func runMigrations(db *sql.DB) error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	-- Calendar connections table (stores OAuth tokens for Google Calendar)
+	CREATE TABLE IF NOT EXISTS calendar_connections (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		provider TEXT NOT NULL DEFAULT 'google' CHECK(provider IN ('google')),
+		access_token_encrypted TEXT NOT NULL,
+		refresh_token_encrypted TEXT,
+		token_expires_at DATETIME,
+		calendar_id TEXT,
+		calendar_email TEXT,
+		is_enabled INTEGER DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(user_id, provider)
+	);
+
 	-- Indexes
 	CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 	-- Note: idx_users_supabase_id is created in runDataMigrations after ensuring column exists

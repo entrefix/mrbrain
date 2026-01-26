@@ -3,6 +3,8 @@ package router
 import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/todomyday/backend/internal/config"
+	"github.com/todomyday/backend/internal/crypto"
 	"github.com/todomyday/backend/internal/handlers"
 	"github.com/todomyday/backend/internal/middleware"
 	"github.com/todomyday/backend/internal/repository"
@@ -23,6 +25,10 @@ func Setup(
 	visionService *services.VisionService,
 	chatService *services.ChatService,
 	redisService *services.RedisService,
+	oauthStateService *services.OAuthStateService,
+	calendarRepo *repository.CalendarRepository,
+	encryptor interface{},
+	cfg interface{},
 	rateLimitRPM int,
 	allowedOrigins []string,
 ) *gin.Engine {
@@ -54,6 +60,20 @@ func Setup(
 	ragHandler := handlers.NewRAGHandler(ragService)
 	userDataHandler := handlers.NewUserDataHandler(userDataService)
 	chatHandler := handlers.NewChatHandler(chatService)
+
+	// Create calendar handler (if OAuth state service and config are available)
+	var calendarHandler *handlers.CalendarHandler
+	if oauthStateService != nil && cfg != nil && encryptor != nil {
+		cfgTyped := cfg.(*config.Config)
+		encryptorTyped := encryptor.(*crypto.Encryptor)
+		calendarHandler = handlers.NewCalendarHandler(&handlers.CalendarHandlerConfig{
+			GoogleClientID:     cfgTyped.GoogleCalendarClientID,
+			GoogleClientSecret: cfgTyped.GoogleCalendarClientSecret,
+			RedirectURI:        cfgTyped.GoogleCalendarRedirectURI,
+			Encryptor:          encryptorTyped,
+			CalendarRepo:       calendarRepo,
+		}, oauthStateService)
+	}
 
 	// API routes
 	api := r.Group("/api")
@@ -140,6 +160,18 @@ func Setup(
 			protected.POST("/chat/threads", chatHandler.CreateThread)
 			protected.POST("/chat/threads/:id/messages", chatHandler.AddMessage)
 			protected.DELETE("/chat/threads/:id", chatHandler.DeleteThread)
+
+			// Calendar Integration
+			if calendarHandler != nil {
+				protected.GET("/calendar/status", calendarHandler.GetStatus)
+				protected.POST("/calendar/connect", calendarHandler.InitiateOAuth)
+				protected.DELETE("/calendar/disconnect", calendarHandler.Disconnect)
+			}
+		}
+
+		// Public calendar OAuth callback (no auth required - state token validates)
+		if calendarHandler != nil {
+			api.GET("/calendar/oauth/callback", calendarHandler.OAuthCallback)
 		}
 	}
 

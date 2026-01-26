@@ -3,9 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { Sun, Moon, Plus, Cpu, Trash, Database, Lock, GoogleLogo } from '@phosphor-icons/react';
-import { aiProviderApi, userDataApi } from '../api';
-import type { AIProvider, AIProviderModel, AIProviderCreate, DataStats } from '../api';
+import { Sun, Moon, Plus, Cpu, Trash, Database, Lock, GoogleLogo, Calendar } from '@phosphor-icons/react';
+import { aiProviderApi, userDataApi, calendarApi } from '../api';
+import type { AIProvider, AIProviderModel, AIProviderCreate, DataStats, CalendarStatus } from '../api';
 import AIProviderCard from '../components/AIProviderCard';
 import AIProviderForm from '../components/AIProviderForm';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -38,12 +38,51 @@ export default function Settings() {
   const [authProvider, setAuthProvider] = useState<'email' | 'google' | null>(null);
   const { updatePassword } = useAuth();
 
+  // Calendar integration state
+  const [calendarStatus, setCalendarStatus] = useState<CalendarStatus | null>(null);
+  const [loadingCalendar, setLoadingCalendar] = useState(true);
+  const [connectingCalendar, setConnectingCalendar] = useState(false);
+  const [disconnectingCalendar, setDisconnectingCalendar] = useState(false);
+
   // Fetch providers on mount
   useEffect(() => {
     fetchProviders();
     fetchDataStats();
     checkAuthProvider();
+    fetchCalendarStatus();
   }, []);
+
+  // Check for OAuth callback
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const success = urlParams.get('success');
+    const error = urlParams.get('error');
+    
+    if (success === 'true') {
+      toast.success('Successfully connected to Google Calendar!');
+      fetchCalendarStatus();
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (error) {
+      toast.error(`Failed to connect to Google Calendar: ${error}`);
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
+  const fetchCalendarStatus = async () => {
+    setLoadingCalendar(true);
+    try {
+      const status = await calendarApi.getStatus();
+      setCalendarStatus(status);
+    } catch (error: any) {
+      console.error('Failed to fetch calendar status:', error);
+      // Set default status if API fails (assume not connected)
+      setCalendarStatus({ connected: false });
+    } finally {
+      setLoadingCalendar(false);
+    }
+  };
 
   const checkAuthProvider = async () => {
     try {
@@ -252,6 +291,31 @@ export default function Settings() {
     }
   };
 
+  const handleConnectCalendar = async () => {
+    setConnectingCalendar(true);
+    try {
+      const { auth_url } = await calendarApi.initiateOAuth();
+      // Redirect to Google OAuth
+      window.location.href = auth_url;
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to initiate calendar connection');
+      setConnectingCalendar(false);
+    }
+  };
+
+  const handleDisconnectCalendar = async () => {
+    setDisconnectingCalendar(true);
+    try {
+      await calendarApi.disconnect();
+      toast.success('Disconnected from Google Calendar');
+      await fetchCalendarStatus();
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to disconnect calendar');
+    } finally {
+      setDisconnectingCalendar(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-surface-light dark:bg-surface-dark relative">
       <motion.div
@@ -405,6 +469,77 @@ export default function Settings() {
                     </button>
                   </div>
                 </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Calendar Integration */}
+        <div className="bg-surface-light-muted dark:bg-surface-dark-muted rounded-2xl overflow-hidden">
+          <div className="p-6">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                <Calendar size={20} weight="regular" className="text-green-600 dark:text-green-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-heading text-gray-900 dark:text-white">
+                  Calendar Integration
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Sync your todos with Google Calendar
+                </p>
+              </div>
+            </div>
+
+            {loadingCalendar ? (
+              <div className="py-8 text-center text-gray-500 dark:text-gray-400">
+                Loading calendar status...
+              </div>
+            ) : (
+              <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+                {calendarStatus && calendarStatus.connected ? (
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h3 className="font-medium text-gray-900 dark:text-white mb-1">
+                        Connected to Google Calendar
+                      </h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                        {calendarStatus.calendar_email && (
+                          <span>Syncing with: {calendarStatus.calendar_email}</span>
+                        )}
+                        {!calendarStatus.calendar_email && (
+                          <span>Calendar integration is active</span>
+                        )}
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleDisconnectCalendar}
+                      disabled={disconnectingCalendar}
+                      className="px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-800 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {disconnectingCalendar ? 'Disconnecting...' : 'Disconnect'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h3 className="font-medium text-gray-900 dark:text-white mb-1">
+                        Connect Google Calendar
+                      </h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                        Sync your todos with Google Calendar for better time management
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleConnectCalendar}
+                      disabled={connectingCalendar}
+                      className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      <GoogleLogo size={16} weight="regular" />
+                      {connectingCalendar ? 'Connecting...' : 'Connect'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

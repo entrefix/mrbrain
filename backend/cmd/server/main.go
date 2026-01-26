@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"github.com/todomyday/backend/internal/config"
 	"github.com/todomyday/backend/internal/crypto"
@@ -106,6 +107,7 @@ func main() {
 	aiProviderRepo := repository.NewAIProviderRepository(db)
 	memoryRepo := repository.NewMemoryRepository(db)
 	chatRepo := repository.NewChatRepository(db)
+	calendarRepo := repository.NewCalendarRepository(db)
 
 	// Initialize encryptor for API keys
 	encryptor := crypto.NewEncryptor(cfg.EncryptionKey)
@@ -234,8 +236,15 @@ func main() {
 	// Initialize chat service
 	chatService := services.NewChatService(chatRepo)
 
+	// Initialize OAuth state service (for calendar OAuth)
+	var oauthStateService *services.OAuthStateService
+	if redisService != nil {
+		oauthStateService = services.NewOAuthStateService(redisService, 10*time.Minute)
+		log.Println("✅ OAuth state service initialized")
+	}
+
 	// Setup router
-	r := router.Setup(supabaseAuthService, userRepo, todoService, groupService, aiProviderService, memoryService, ragService, userDataService, fileParserService, uploadJobService, visionService, chatService, redisService, cfg.RateLimitRequestsPerMinute, cfg.AllowedOrigins)
+	r := router.Setup(supabaseAuthService, userRepo, todoService, groupService, aiProviderService, memoryService, ragService, userDataService, fileParserService, uploadJobService, visionService, chatService, redisService, oauthStateService, calendarRepo, encryptor, cfg, cfg.RateLimitRequestsPerMinute, cfg.AllowedOrigins)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)
